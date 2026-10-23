@@ -5,6 +5,7 @@ import { splitStatements } from "./editor/activeSql";
 import { SqlEditor, type SqlEditorHandle } from "./editor/SqlEditor";
 import { ResultGrid, type GridRangeActions } from "./grid/ResultGrid";
 import { ConnectionHome, type HomeCommand } from "./home/ConnectionHome";
+import { UpdateCenter } from "./home/UpdateCenter";
 import { toConfig, type Draft } from "./home/draft";
 import { cancelQuery, connect, createGroup, deleteGroup, deleteProfile, disconnect, errorMessage, checkSql, defaultSafety, executeBatch, GuardError, executeQuery, exportQuery, importCsv, backupDatabase, restoreDatabase, formatSqlValue, introspect, listForeignKeys, listProfiles, closeDiscarding, listenHere, openConnectionWindow, quitDiscarding, setUnsaved, qualifiedName, quoteIdent, saveConnection, setDialect, testConnection, writeExport, type BatchStatement, type BrowseKind, type ColumnDefinition, type ConnectionCatalog, type ConnectionConfig, type DatabaseEngine, type ForeignKey, type GuardInfo, type SqlValue, type TableSchema, type TestResult } from "./lib/api";
 import { canEditRows, createSchemaSql, createTableSql, deleteSql, dropSchemaSql, insertSql, listSchemasSql, primaryKeys, renameSchemaSql, rowRecord, schemaNameFrom, updateSql, type ColumnDraft } from "./workspace/changes";
@@ -1620,8 +1621,11 @@ export function App() {
     return () => stop();
   }, []);
 
+  const updates = <UpdateCenter beforeRestart={() => confirmDiscardRef.current({ action: "Actualizar y reiniciar" })} />;
+
   if (screen === "home") {
     return (
+      <>
       <ConnectionHome
         catalog={catalog}
         busy={busy}
@@ -1638,6 +1642,8 @@ export function App() {
         onTest={testDraft}
         pendingCommand={homeCommand}
       />
+      {updates}
+      </>
     );
   }
 
@@ -2231,6 +2237,7 @@ export function App() {
       {dialog?.kind === "drop-schema" ? (
         <ConfirmDialog title="Eliminar esquema" description={`Se elimina ${dialog.name} solo si no tiene tablas.`} confirmLabel="Eliminar" busy={running} error={formError} onClose={() => setDialog(null)} onConfirm={() => void submitDropSchema()} />
       ) : null}
+      {updates}
       {importing ? (
         <ImportDialog
           path={importing.path}

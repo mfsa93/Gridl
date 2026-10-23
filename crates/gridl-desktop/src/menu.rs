@@ -61,6 +61,13 @@ pub fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
                 true,
                 &[
                     &PredefinedMenuItem::about(app, Some("Acerca de Gridl"), Some(about))?,
+                    &MenuItem::with_id(
+                        app,
+                        "check-updates",
+                        "Buscar actualizaciones…",
+                        true,
+                        None::<&str>,
+                    )?,
                     &PredefinedMenuItem::separator(app)?,
                     &PredefinedMenuItem::services(app, None)?,
                     &PredefinedMenuItem::separator(app)?,
@@ -93,7 +100,16 @@ pub fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
                 app,
                 "Ayuda",
                 true,
-                &[&PredefinedMenuItem::about(app, Some("Acerca de Gridl"), Some(about))?],
+                &[
+                    &PredefinedMenuItem::about(app, Some("Acerca de Gridl"), Some(about))?,
+                    &MenuItem::with_id(
+                        app,
+                        "check-updates",
+                        "Buscar actualizaciones…",
+                        true,
+                        None::<&str>,
+                    )?,
+                ],
             )?,
         ],
     )?;

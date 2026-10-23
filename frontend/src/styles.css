@@ -349,7 +349,9 @@ html.vibrant .workspace-topbar, html.vibrant .connection-toolbar { background: v
 
 /* Connection home */
 .connection-home { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
-.connection-toolbar .search-wrap { flex: 1; max-width: 360px; margin-right: auto; }
+/* Centered on the whole window, like the search field in Finder or Mail. */
+.connection-toolbar { position: relative; justify-content: flex-end; }
+.connection-toolbar .search-wrap { position: absolute; left: 50%; width: min(420px, 38%); transform: translateX(-50%); }
 .workspace-grid { display: grid; grid-template-columns: 220px minmax(0, 1fr); flex: 1; min-width: 0; min-height: 0; }
 .sidebar-card {
   display: flex;
@@ -1295,3 +1297,11 @@ select {
 .workspace-topbar .topbar-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; min-width: 0; }
 .backup-note { max-width: 360px; overflow: hidden; color: var(--label-2); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; cursor: default; }
 .popover-menu > button:disabled { opacity: 0.35; background: transparent; color: var(--label); }
+
+/* Update sheet */
+.update-modal { width: min(480px, 100%); }
+.update-notes { max-height: 220px; margin: 0 0 6px; padding: 10px 12px; overflow: auto; border-radius: 8px; color: var(--label); background: var(--fill); font-family: var(--font); font-size: 12px; line-height: 1.5; white-space: pre-wrap; }
+.update-progress { height: 6px; margin-top: 12px; overflow: hidden; border-radius: 3px; background: var(--fill-strong); }
+.update-progress > span { display: block; height: 100%; border-radius: 3px; background: var(--accent); transition: width 0.2s ease; }
+.update-progress > span.indeterminate { animation: update-slide 1.2s ease-in-out infinite; }
+@keyframes update-slide { from { transform: translateX(-100%); } to { transform: translateX(300%); } }

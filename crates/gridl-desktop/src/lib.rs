@@ -15,9 +15,14 @@ use tauri::Manager;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .on_menu_event(|app, event| {
             let command = event.id().0.clone();
-            if matches!(command.as_str(), "new-connection" | "new-group" | "close-tab" | "reload") {
+            if matches!(
+                command.as_str(),
+                "new-connection" | "new-group" | "close-tab" | "reload" | "check-updates"
+            ) {
                 // Only the window the user is looking at acts on the menu.
                 if let Some(label) = windows::focused_label(app) {
                     windows::emit_to_window(app, &label, "gridl-command", command);
