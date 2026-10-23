@@ -92,9 +92,31 @@ pub async fn open_connection_window(
         }
     }
     let label = new_label(&app);
-    let url =
-        WebviewUrl::App(format!("index.html#connect={}", encode_component(id.as_str())).into());
-    let builder = WebviewWindowBuilder::new(&app, &label, url)
+    let url = format!("index.html#connect={}", encode_component(id.as_str()));
+    // Claim the connection now so a second request focuses this window
+    // instead of opening another one before it connects.
+    state.set_owner(id.as_str(), &label);
+    if let Err(err) = build_window(&app, &label, url) {
+        state.clear_owner(id.as_str());
+        return Err(err);
+    }
+    Ok(label)
+}
+
+/// Opens a window on the connection list and runs `command` there
+/// ("new-connection" or "new-group"), so the window in use keeps its work.
+#[tauri::command]
+pub async fn open_home_window(app: AppHandle, command: String) -> Result<String, String> {
+    if !matches!(command.as_str(), "new-connection" | "new-group") {
+        return Err(format!("unknown command {command}"));
+    }
+    let label = new_label(&app);
+    build_window(&app, &label, format!("index.html#command={command}"))?;
+    Ok(label)
+}
+
+fn build_window(app: &AppHandle, label: &str, url: String) -> Result<(), String> {
+    let builder = WebviewWindowBuilder::new(app, label, WebviewUrl::App(url.into()))
         .title("Gridl")
         .inner_size(1440.0, 900.0)
         .min_inner_size(960.0, 640.0);
@@ -110,14 +132,7 @@ pub async fn open_connection_window(
                 .state(tauri::window::EffectState::FollowsWindowActiveState)
                 .build(),
         );
-    // Claim the connection now so a second request focuses this window
-    // instead of opening another one before it connects.
-    state.set_owner(id.as_str(), &label);
-    if let Err(err) = builder.build() {
-        state.clear_owner(id.as_str());
-        return Err(err.to_string());
-    }
-    Ok(label)
+    builder.build().map(|_| ()).map_err(|err| err.to_string())
 }
 
 /// Window events: ask before closing a window with unsaved edits, and close

@@ -8,7 +8,7 @@ import type { ConnectingState } from "./home/ConnectingStatus";
 import { ConnectionHome, type HomeCommand } from "./home/ConnectionHome";
 import { UpdateCenter } from "./home/UpdateCenter";
 import { toConfig, type Draft } from "./home/draft";
-import { cancelQuery, connect, createGroup, deleteGroup, deleteProfile, disconnect, errorMessage, checkSql, defaultSafety, executeBatch, GuardError, executeQuery, exportQuery, importCsv, backupDatabase, restoreDatabase, formatSqlValue, introspect, listForeignKeys, listProfiles, closeDiscarding, listenHere, openConnectionWindow, quitDiscarding, setUnsaved, qualifiedName, quoteIdent, saveConnection, setDialect, testConnection, writeExport, type BatchStatement, type BrowseKind, type ColumnDefinition, type ConnectionCatalog, type ConnectionConfig, type DatabaseEngine, type ForeignKey, type GuardInfo, type SqlValue, type TableSchema, type TestResult } from "./lib/api";
+import { cancelQuery, connect, createGroup, deleteGroup, deleteProfile, disconnect, errorMessage, checkSql, defaultSafety, executeBatch, GuardError, executeQuery, exportQuery, importCsv, backupDatabase, restoreDatabase, formatSqlValue, introspect, listForeignKeys, listProfiles, closeDiscarding, listenHere, openConnectionWindow, openHomeWindow, quitDiscarding, setUnsaved, qualifiedName, quoteIdent, saveConnection, setDialect, testConnection, writeExport, type BatchStatement, type BrowseKind, type ColumnDefinition, type ConnectionCatalog, type ConnectionConfig, type DatabaseEngine, type ForeignKey, type GuardInfo, type SqlValue, type TableSchema, type TestResult } from "./lib/api";
 import { canEditRows, createSchemaSql, createTableSql, deleteSql, dropSchemaSql, insertSql, listSchemasSql, primaryKeys, renameSchemaSql, rowRecord, schemaNameFrom, updateSql, type ColumnDraft } from "./workspace/changes";
 import { CodedError, describeError, errorCode, isConnectionLost, type ShownError } from "./lib/errors";
 import { formatNumber, formatTime, plural, t } from "./lib/i18n";
@@ -235,6 +235,11 @@ export function App() {
         return;
       }
       if (kind !== "new-connection" && kind !== "new-group") return;
+      // Working in a connection: open the form in a new window and keep this one as it is.
+      if (activeRef.current) {
+        void openHomeWindow(kind).catch((caught: unknown) => setError(errorMessage(caught)));
+        return;
+      }
       void (async () => {
         if (!(await confirmDiscardRef.current({ action: t("app.discard.leaveConnection") }))) return;
         setInTransaction(false);
@@ -285,6 +290,12 @@ export function App() {
         const wanted = new URLSearchParams(window.location.hash.slice(1)).get("connect");
         const profile = wanted ? next.profiles.find((item) => item.id === wanted) : undefined;
         if (profile) void openSavedRef.current(profile);
+        // A window opened by ⌘N from a connection carries the command: #command=new-connection.
+        const command = new URLSearchParams(window.location.hash.slice(1)).get("command");
+        if (command === "new-connection" || command === "new-group") {
+          commandNonce.current += 1;
+          setHomeCommand({ nonce: commandNonce.current, kind: command });
+        }
       })
       .catch((caught: unknown) => {
         if (!cancelled) setError(errorMessage(caught));
