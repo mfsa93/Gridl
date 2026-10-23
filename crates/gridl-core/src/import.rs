@@ -10,6 +10,7 @@ use serde::Serialize;
 
 use crate::error::CoreError;
 use crate::export::text_literal;
+use crate::tr;
 use crate::types::{BatchStatement, DatabaseEngine};
 
 /// Data rows the preview returns after the header row.
@@ -71,7 +72,10 @@ fn transfer(message: impl Into<String>) -> CoreError {
 pub fn parse_delimiter(text: &str) -> Result<u8, CoreError> {
     match text.as_bytes() {
         [byte] if byte.is_ascii() && *byte != b'"' && *byte != b'\n' && *byte != b'\r' => Ok(*byte),
-        _ => Err(transfer("El separador debe ser un solo carácter ASCII.")),
+        _ => Err(transfer(tr!(
+            "The separator must be a single ASCII character.",
+            "El separador debe ser un solo carácter ASCII."
+        ))),
     }
 }
 
@@ -114,16 +118,21 @@ pub fn sniff_delimiter(sample: &[u8]) -> u8 {
 
 /// Opens `path` past a UTF-8 byte order mark, after checking its size.
 fn open_csv(path: &Path) -> Result<(BufReader<File>, u64), CoreError> {
-    let metadata = std::fs::metadata(path)
-        .map_err(|err| transfer(format!("No se pudo abrir el archivo: {err}")))?;
+    let metadata = std::fs::metadata(path).map_err(|err| {
+        transfer(tr!("Couldn't open the file: {err}", "No se pudo abrir el archivo: {err}"))
+    })?;
     if !metadata.is_file() {
-        return Err(transfer("La ruta no es un archivo."));
+        return Err(transfer(tr!("The path is not a file.", "La ruta no es un archivo.")));
     }
     if metadata.len() > MAX_IMPORT_BYTES {
-        return Err(transfer("El archivo supera 512 MiB."));
+        return Err(transfer(tr!(
+            "The file is larger than 512 MiB.",
+            "El archivo supera 512 MiB."
+        )));
     }
-    let file =
-        File::open(path).map_err(|err| transfer(format!("No se pudo abrir el archivo: {err}")))?;
+    let file = File::open(path).map_err(|err| {
+        transfer(tr!("Couldn't open the file: {err}", "No se pudo abrir el archivo: {err}"))
+    })?;
     let mut reader = BufReader::with_capacity(SNIFF_BYTES, file);
     let starts_with_bom = reader.fill_buf()?.starts_with(BOM);
     if starts_with_bom {
@@ -143,8 +152,11 @@ fn csv_reader<R: Read>(reader: R, delimiter: u8) -> csv::Reader<R> {
 fn csv_error(err: &csv::Error) -> CoreError {
     let line = err.position().map(csv::Position::line);
     match line {
-        Some(line) => transfer(format!("Línea {line}: el CSV no es válido ({err}).")),
-        None => transfer(format!("El CSV no es válido: {err}")),
+        Some(line) => transfer(tr!(
+            "Line {line}: the CSV is not valid ({err}).",
+            "Línea {line}: el CSV no es válido ({err})."
+        )),
+        None => transfer(tr!("The CSV is not valid: {err}", "El CSV no es válido: {err}")),
     }
 }
 
@@ -188,10 +200,13 @@ pub fn preview_csv(path: &Path, delimiter: Option<&str>) -> Result<CsvPreview, C
 /// The INSERT statements for `plan`, [`IMPORT_ROWS_PER_STATEMENT`] rows each.
 pub fn build_import(path: &Path, plan: &ImportPlan) -> Result<ImportBatch, CoreError> {
     if plan.table.trim().is_empty() {
-        return Err(transfer("Indica la tabla de destino."));
+        return Err(transfer(tr!("Choose the destination table.", "Indica la tabla de destino.")));
     }
     if plan.columns.len() != plan.mapping.len() {
-        return Err(transfer("Cada columna de destino necesita su origen en el CSV."));
+        return Err(transfer(tr!(
+            "Each destination column needs a source column in the CSV.",
+            "Cada columna de destino necesita su origen en el CSV."
+        )));
     }
     let active: Vec<(&str, usize)> = plan
         .columns
@@ -200,10 +215,16 @@ pub fn build_import(path: &Path, plan: &ImportPlan) -> Result<ImportBatch, CoreE
         .filter_map(|(column, source)| source.map(|index| (column.as_str(), index)))
         .collect();
     if active.is_empty() {
-        return Err(transfer("Elige al menos una columna para importar."));
+        return Err(transfer(tr!(
+            "Choose at least one column to import.",
+            "Elige al menos una columna para importar."
+        )));
     }
     if active.iter().any(|(column, _)| column.trim().is_empty() || column.contains('\0')) {
-        return Err(transfer("Hay una columna de destino sin nombre."));
+        return Err(transfer(tr!(
+            "A destination column has no name.",
+            "Hay una columna de destino sin nombre."
+        )));
     }
     let names: Vec<&str> = active.iter().map(|(column, _)| *column).collect();
     let prefix = format!("INSERT INTO {} ({}) VALUES ", plan.table, names.join(", "));
@@ -235,14 +256,18 @@ pub fn build_import(path: &Path, plan: &ImportPlan) -> Result<ImportBatch, CoreE
                 sql.push_str(", ");
             }
             let Some(field) = record.get(*index) else {
-                return Err(transfer(format!(
-                    "Línea {line}: tiene {} columnas y falta la columna {}.",
-                    record.len(),
-                    index + 1
+                let (found, missing) = (record.len(), index + 1);
+                return Err(transfer(tr!(
+                    "Line {line}: it has {found} columns and column {missing} is missing.",
+                    "Línea {line}: tiene {found} columnas y falta la columna {missing}."
                 )));
             };
-            let text = std::str::from_utf8(field)
-                .map_err(|_| transfer(format!("Línea {line}: el texto no es UTF-8 válido.")))?;
+            let text = std::str::from_utf8(field).map_err(|_| {
+                transfer(tr!(
+                    "Line {line}: the text is not valid UTF-8.",
+                    "Línea {line}: el texto no es UTF-8 válido."
+                ))
+            })?;
             if text.is_empty() || Some(text) == null_token {
                 sql.push_str("NULL");
             } else {
@@ -269,7 +294,10 @@ pub fn build_import(path: &Path, plan: &ImportPlan) -> Result<ImportBatch, CoreE
         batch.spans.push(span);
     }
     if batch.rows == 0 {
-        return Err(transfer("El archivo no tiene filas para importar."));
+        return Err(transfer(tr!(
+            "The file has no rows to import.",
+            "El archivo no tiene filas para importar."
+        )));
     }
     Ok(batch)
 }
@@ -277,6 +305,7 @@ pub fn build_import(path: &Path, plan: &ImportPlan) -> Result<ImportBatch, CoreE
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{with_locale, Locale};
 
     fn temp_file(name: &str, contents: &[u8]) -> std::path::PathBuf {
         let directory = std::env::temp_dir().join(format!("gridl-import-{}", std::process::id()));
@@ -372,15 +401,16 @@ mod tests {
         assert_eq!(batch.spans[2], (1_001, 1_201, 201));
 
         let short = temp_file("short.csv", b"a,b,c\n1,2,3\n4,5\n");
-        let err =
-            build_import(&short, &plan(DatabaseEngine::Sqlite, vec![Some(0), Some(1), Some(2)]))
-                .expect_err("short row");
-        assert!(err.to_string().starts_with("Línea 3:"), "{err}");
+        let all = plan(DatabaseEngine::Sqlite, vec![Some(0), Some(1), Some(2)]);
+        let err = with_locale(Locale::Es, || build_import(&short, &all).expect_err("short row"));
+        assert_eq!(err.to_string(), "Línea 3: tiene 2 columnas y falta la columna 3.");
+        assert_eq!(
+            with_locale(Locale::En, || build_import(&short, &all).expect_err("short").to_string()),
+            "Line 3: it has 2 columns and column 3 is missing."
+        );
 
         let invalid = temp_file("latin1.csv", b"a,b,c\n1,\xE9,3\n");
-        let err =
-            build_import(&invalid, &plan(DatabaseEngine::Sqlite, vec![Some(0), Some(1), Some(2)]))
-                .expect_err("utf8");
+        let err = with_locale(Locale::Es, || build_import(&invalid, &all).expect_err("utf8"));
         assert!(err.to_string().contains("Línea 2"), "{err}");
 
         let header_only = temp_file("header.csv", b"a,b,c\n");

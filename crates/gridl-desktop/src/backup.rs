@@ -17,6 +17,8 @@ use gridl_core::{
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
+use gridl_core::tr;
+
 use crate::commands::{fail, guard_restore};
 use crate::state::{AppState, Session};
 
@@ -85,10 +87,10 @@ pub(crate) async fn run_backup(
     let session = state.session(id.as_str()).map_err(fail)?;
     let path = PathBuf::from(&request.path);
     if path.is_dir() {
-        return Err("la ruta es una carpeta".into());
+        return Err(tr!("the path is a folder", "la ruta es una carpeta"));
     }
     if !path.parent().is_none_or(|parent| parent.as_os_str().is_empty() || parent.is_dir()) {
-        return Err("la carpeta de destino no existe".into());
+        return Err(tr!("the destination folder doesn't exist", "la carpeta de destino no existe"));
     }
     // Write next to the target and rename at the end, so a failed backup
     // leaves an existing file alone.
@@ -128,8 +130,9 @@ pub(crate) async fn run_backup(
         }
     };
     let renamed = outcome.and_then(|()| {
-        std::fs::rename(&partial, &path)
-            .map_err(|err| format!("No se pudo guardar el respaldo: {err}"))
+        std::fs::rename(&partial, &path).map_err(|err| {
+            tr!("Couldn't save the backup: {err}", "No se pudo guardar el respaldo: {err}")
+        })
     });
     if let Err(err) = renamed {
         let _ = std::fs::remove_file(&partial);
@@ -157,14 +160,17 @@ pub(crate) async fn run_restore(
     let id = ConnectionId::new(request.connection_id).map_err(fail)?;
     let session = state.session(id.as_str()).map_err(fail)?;
     if session.config.engine == DatabaseEngine::Sqlite {
-        return Err("Para restaurar un SQLite, abre el archivo de respaldo como conexión.".into());
+        return Err(tr!(
+            "To restore SQLite, open the backup file as a connection.",
+            "Para restaurar un SQLite, abre el archivo de respaldo como conexión."
+        ));
     }
     if session.config.read_only {
-        return Err("La conexión es de solo lectura.".into());
+        return Err(tr!("The connection is read-only.", "La conexión es de solo lectura."));
     }
     let path = PathBuf::from(&request.path);
     if !path.is_file() {
-        return Err("El archivo de respaldo no existe.".into());
+        return Err(tr!("The backup file doesn't exist.", "El archivo de respaldo no existe."));
     }
     guard_restore(
         state,
@@ -188,8 +194,9 @@ pub(crate) async fn run_restore(
             run_tool("psql", &args, pg_env(&session.config, password.as_ref()), None).await?;
         }
         DatabaseEngine::Mysql => {
-            let input = std::fs::File::open(&path)
-                .map_err(|err| format!("No se pudo abrir el respaldo: {err}"))?;
+            let input = std::fs::File::open(&path).map_err(|err| {
+                tr!("Couldn't open the backup: {err}", "No se pudo abrir el respaldo: {err}")
+            })?;
             let args = target.mysql_args(&session.config);
             run_tool("mysql", &args, mysql_env(password.as_ref()), Some(Stdio::from(input)))
                 .await?;
@@ -210,7 +217,9 @@ impl ChunkSink for NullSink {
 
 /// SQLite copies itself with `VACUUM INTO`, consistent even while in use.
 async fn vacuum_into(state: &AppState, id: &ConnectionId, path: &Path) -> Result<(), String> {
-    let target = path.to_str().ok_or("la ruta no es UTF-8 válido")?;
+    let target = path
+        .to_str()
+        .ok_or_else(|| tr!("the path is not valid UTF-8", "la ruta no es UTF-8 válido"))?;
     let sql = format!("VACUUM INTO '{}'", target.replace('\'', "''"));
     let query_id = format!("backup-{}", std::process::id());
     let cancel = Arc::new(AtomicBool::new(false));
@@ -358,8 +367,13 @@ async fn run_tool(
     env: Vec<(String, String)>,
     stdin: Option<Stdio>,
 ) -> Result<(), String> {
-    let binary = find_tool(name)
-        .ok_or_else(|| format!("No encontré {name}. Instálalo con: {}", install_hint(name)))?;
+    let binary = find_tool(name).ok_or_else(|| {
+        let hint = install_hint(name);
+        tr!(
+            "Couldn't find {name}. Install it with: {hint}",
+            "No encontré {name}. Instálalo con: {hint}"
+        )
+    })?;
     let output = tokio::process::Command::new(&binary)
         .args(args)
         .envs(env)
@@ -369,13 +383,14 @@ async fn run_tool(
         .kill_on_drop(true)
         .output()
         .await
-        .map_err(|err| format!("No se pudo ejecutar {name}: {err}"))?;
+        .map_err(|err| tr!("Couldn't run {name}: {err}", "No se pudo ejecutar {name}: {err}"))?;
     if output.status.success() {
         return Ok(());
     }
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
     if stderr.is_empty() {
-        return Err(format!("{name} terminó con {}", output.status));
+        let status = output.status;
+        return Err(tr!("{name} ended with {status}", "{name} terminó con {status}"));
     }
     Err(stderr)
 }
@@ -429,6 +444,7 @@ mod tests {
 
     #[tokio::test]
     async fn missing_tools_say_how_to_install_them() {
+        gridl_core::set_locale(gridl_core::Locale::Es);
         let err = run_tool("gridl-no-such-tool", &[], Vec::new(), None).await.expect_err("missing");
         assert_eq!(err, "No encontré gridl-no-such-tool. Instálalo con: brew install mysql-client");
         assert_eq!(install_hint("pg_dump"), "brew install libpq");

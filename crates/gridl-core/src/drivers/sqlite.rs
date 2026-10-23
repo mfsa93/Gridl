@@ -14,6 +14,7 @@ use super::{batch_err, db_err, elapsed_ms, quote_ident};
 use crate::driver::{ChunkSink, DatabaseDriver};
 use crate::error::CoreError;
 use crate::secret::SecretString;
+use crate::tr;
 use crate::types::ForeignKey;
 use crate::types::{
     BatchRequest, BatchResult, ColumnDefinition, ConnectionConfig, ConnectionId, DatabaseEngine,
@@ -394,21 +395,26 @@ fn connect_options(
 
 fn resolve_sqlite_path(config: &ConnectionConfig) -> Result<PathBuf, CoreError> {
     if config.read_only && config.create_if_missing {
-        return Err(CoreError::InvalidConfig(
-            "a read-only connection cannot create the database file".into(),
-        ));
+        return Err(CoreError::InvalidConfig(tr!(
+            "a read-only connection can't create the database file",
+            "una conexión de solo lectura no puede crear el archivo de la base de datos"
+        )));
     }
     let raw = PathBuf::from(&config.database);
     if raw.as_os_str().is_empty() {
-        return Err(CoreError::InvalidConfig("sqlite path is empty".into()));
+        return Err(CoreError::InvalidConfig(tr!(
+            "the SQLite file path is empty",
+            "la ruta del archivo SQLite está vacía"
+        )));
     }
     if raw.exists() {
         return dunce::canonicalize(&raw).map_err(CoreError::from);
     }
     if !config.create_if_missing {
-        return Err(CoreError::InvalidConfig(format!(
-            "database file does not exist: {}",
-            raw.display()
+        let path = raw.display();
+        return Err(CoreError::InvalidConfig(tr!(
+            "the database file wasn't found: {path}",
+            "el archivo de la base de datos no existe: {path}"
         )));
     }
     let parent = match raw.parent() {
@@ -416,15 +422,19 @@ fn resolve_sqlite_path(config: &ConnectionConfig) -> Result<PathBuf, CoreError> 
         _ => Path::new("."),
     };
     if !parent.exists() {
-        return Err(CoreError::InvalidConfig(format!(
-            "directory does not exist: {}",
-            parent.display()
+        let folder = parent.display();
+        return Err(CoreError::InvalidConfig(tr!(
+            "the folder wasn't found: {folder}",
+            "la carpeta no existe: {folder}"
         )));
     }
     let parent = dunce::canonicalize(parent)?;
-    let file_name = raw
-        .file_name()
-        .ok_or_else(|| CoreError::InvalidConfig("sqlite path is missing a file name".into()))?;
+    let file_name = raw.file_name().ok_or_else(|| {
+        CoreError::InvalidConfig(tr!(
+            "the SQLite path has no file name",
+            "a la ruta SQLite le falta el nombre del archivo"
+        ))
+    })?;
     Ok(parent.join(file_name))
 }
 

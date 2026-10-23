@@ -18,6 +18,7 @@ use super::{batch_err, db_err, elapsed_ms};
 use crate::driver::{ChunkSink, DatabaseDriver};
 use crate::error::CoreError;
 use crate::secret::SecretString;
+use crate::tr;
 use crate::types::ForeignKey;
 use crate::types::{
     BatchRequest, BatchResult, ColumnDefinition, ConnectionConfig, ConnectionId, DatabaseEngine,
@@ -425,8 +426,12 @@ async fn server_identity(pool: &MySqlPool) -> Result<(String, String), CoreError
         .fetch_one(pool)
         .await
         .map_err(db_err)?;
-    let database = opt_text(&row, "db")?
-        .ok_or_else(|| CoreError::InvalidConfig("mysql session has no database".into()))?;
+    let database = opt_text(&row, "db")?.ok_or_else(|| {
+        CoreError::InvalidConfig(tr!(
+            "the MySQL session has no database selected",
+            "la sesión MySQL no tiene una base de datos elegida"
+        ))
+    })?;
     Ok((database, text(&row, "version")?))
 }
 
@@ -564,10 +569,9 @@ fn my_options(
             "mysql driver received a non-mysql connection".into(),
         ));
     }
-    let username = config
-        .username
-        .as_deref()
-        .ok_or_else(|| CoreError::InvalidConfig("mysql username is required".into()))?;
+    let username = config.username.as_deref().ok_or_else(|| {
+        CoreError::InvalidConfig(tr!("MySQL needs a username", "MySQL necesita un usuario"))
+    })?;
     let (host, port) = match endpoint {
         Some((host, port)) => (host.as_str(), *port),
         None => (config.host.as_deref().unwrap_or("localhost"), config.port.unwrap_or(3306)),

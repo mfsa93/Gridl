@@ -161,9 +161,7 @@ async fn postgres_batch_rolls_back_on_failure() {
     ])
     .expect("batch");
     let failed = driver.execute_batch(&id, &bad).await;
-    assert!(
-        matches!(&failed, Err(CoreError::Database(message)) if message.starts_with("sentencia 2"))
-    );
+    assert!(matches!(&failed, Err(CoreError::Statement { number: 2, .. })));
     let name = first(&run(&driver, &id, "SELECT name FROM gridl_batch WHERE id = 1").await);
     assert_eq!(name, SqlValue::Text("a".into()));
     driver.disconnect(&id).await.expect("disconnect");
