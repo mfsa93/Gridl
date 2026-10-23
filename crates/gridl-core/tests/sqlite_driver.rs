@@ -250,9 +250,7 @@ async fn sqlite_batch_commits_all_or_nothing() {
     ])
     .expect("batch");
     let failed = driver.execute_batch(&id, &bad).await;
-    assert!(
-        matches!(&failed, Err(CoreError::Database(message)) if message.starts_with("sentencia 2"))
-    );
+    assert!(matches!(&failed, Err(CoreError::Statement { number: 2, .. })));
     let names = run(&driver, &id, "SELECT name FROM items WHERE id = 1").await;
     assert_eq!(count(&names), SqlValue::Text("a".into()));
     assert_eq!(count(&run(&driver, &id, "SELECT count(*) FROM items").await), SqlValue::Int(2));

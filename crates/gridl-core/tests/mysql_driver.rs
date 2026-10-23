@@ -368,9 +368,8 @@ async fn mysql_batch_rolls_back_on_failure() {
     };
     let failing = BatchRequest::new(vec![insert(1), insert(1)]).expect("batch");
     let err = driver.execute_batch(&id, &failing).await.expect_err("duplicate key");
-    assert!(err.to_string().contains("sentencia 2"), "{err}");
     match &err {
-        CoreError::Database(message) => assert!(message.starts_with("sentencia 2"), "{message}"),
+        CoreError::Statement { number, .. } => assert_eq!(*number, 2, "{err}"),
         other => panic!("unexpected error {other:?}"),
     }
     assert_eq!(count(&driver, &id, "gt_batch").await, 0);

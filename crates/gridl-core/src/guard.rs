@@ -7,6 +7,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::tr;
+
 /// Where a connection points. It only picks the suggested policy and the badge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
@@ -225,7 +227,41 @@ const SESSION: &[&str] = &[
 
 struct Shape {
     kind: StatementKind,
-    danger: Option<&'static str>,
+    danger: Option<Danger>,
+}
+
+/// A statement destructive enough to always ask about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Danger {
+    Drop,
+    Truncate,
+    UpdateWithoutWhere,
+    DeleteWithoutWhere,
+}
+
+impl Danger {
+    fn reason(self) -> String {
+        match self {
+            Danger::Drop => {
+                tr!("DROP deletes the object and its data", "DROP elimina el objeto y sus datos")
+            }
+            Danger::Truncate => {
+                tr!("TRUNCATE empties the whole table", "TRUNCATE vacía la tabla completa")
+            }
+            Danger::UpdateWithoutWhere => {
+                tr!(
+                    "UPDATE without WHERE changes every row",
+                    "UPDATE sin WHERE cambia todas las filas"
+                )
+            }
+            Danger::DeleteWithoutWhere => {
+                tr!(
+                    "DELETE without WHERE deletes every row",
+                    "DELETE sin WHERE borra todas las filas"
+                )
+            }
+        }
+    }
 }
 
 fn has_top(tokens: &[Token], word: &str) -> bool {
@@ -289,8 +325,8 @@ fn shape(tokens: &[Token]) -> Shape {
     }
     if SCHEMA.contains(&verb) {
         let danger = match verb {
-            "DROP" => Some("DROP elimina el objeto y sus datos"),
-            "TRUNCATE" => Some("TRUNCATE vacía la tabla completa"),
+            "DROP" => Some(Danger::Drop),
+            "TRUNCATE" => Some(Danger::Truncate),
             _ => None,
         };
         return Shape { kind: StatementKind::Schema, danger };
@@ -306,10 +342,10 @@ fn shape(tokens: &[Token]) -> Shape {
     Shape { kind: StatementKind::Write, danger: None }
 }
 
-fn without_where(verb: Option<&Token>) -> &'static str {
+fn without_where(verb: Option<&Token>) -> Danger {
     match verb.map(|token| token.word.as_str()) {
-        Some("UPDATE") => "UPDATE sin WHERE cambia todas las filas",
-        _ => "DELETE sin WHERE borra todas las filas",
+        Some("UPDATE") => Danger::UpdateWithoutWhere,
+        _ => Danger::DeleteWithoutWhere,
     }
 }
 
@@ -333,14 +369,16 @@ pub fn evaluate(policy: &SafetySettings, sql: &str) -> Verdict {
     for tokens in statements(sql) {
         let shape = shape(&tokens);
         let (mode, what) = match shape.kind {
-            StatementKind::Write => (policy.writes, "modifica datos"),
-            StatementKind::Schema => (policy.schema, "cambia la estructura"),
-            StatementKind::Read | StatementKind::Session => (GuardMode::Allow, ""),
+            StatementKind::Write => (policy.writes, tr!("modifies data", "modifica datos")),
+            StatementKind::Schema => {
+                (policy.schema, tr!("changes the structure", "cambia la estructura"))
+            }
+            StatementKind::Read | StatementKind::Session => (GuardMode::Allow, String::new()),
         };
-        let mut next = Verdict { mode, reason: what.to_owned(), dangerous: false };
+        let mut next = Verdict { mode, reason: what, dangerous: false };
         if let Some(danger) = shape.danger {
             next.dangerous = true;
-            next.reason = danger.to_owned();
+            next.reason = danger.reason();
             if policy.confirm_dangerous && next.mode == GuardMode::Allow {
                 next.mode = GuardMode::Confirm;
             }
@@ -369,7 +407,10 @@ pub fn evaluate_restore(policy: &SafetySettings) -> Verdict {
     }
     Verdict {
         mode,
-        reason: "restaurar un respaldo reemplaza estructura y datos".into(),
+        reason: tr!(
+            "restoring a backup replaces structure and data",
+            "restaurar un respaldo reemplaza estructura y datos"
+        ),
         dangerous: true,
     }
 }
@@ -430,7 +471,10 @@ mod tests {
         let verdict = evaluate(&open, "delete from t");
         assert_eq!(verdict.mode, GuardMode::Confirm);
         assert!(verdict.dangerous);
-        assert!(verdict.reason.contains("sin WHERE"));
+        let reason =
+            |locale| crate::with_locale(locale, || evaluate(&open, "delete from t").reason);
+        assert_eq!(reason(crate::Locale::Es), "DELETE sin WHERE borra todas las filas");
+        assert_eq!(reason(crate::Locale::En), "DELETE without WHERE deletes every row");
         assert_eq!(
             evaluate(&open, "delete from t where id in (select id from u)").mode,
             GuardMode::Allow

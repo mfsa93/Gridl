@@ -246,7 +246,7 @@ async fn sqlite_import_is_all_or_nothing_and_names_the_line() {
         run_import(&state, import_request(&id, &bad_csv, vec![Some(1), Some(0), None]), &|_| {})
             .await
             .expect_err("not null");
-    assert!(err.contains("líneas 502 a 901"), "{err}");
+    assert!(err.contains("502") && err.contains("901"), "{err}");
     assert_eq!(scalar(&state, &id, "SELECT count(*) FROM people").await, SqlValue::Int(1_200));
 }
 
@@ -333,7 +333,7 @@ async fn assert_timeouts(state: &AppState, id: &ConnectionId, sleep: &str, table
     let err = run_query(state, query(id, "slow", &format!("SELECT {sleep}")), &mut sink)
         .await
         .expect_err("timeout");
-    assert_eq!(err, "La consulta superó el tiempo límite de 1 s y se canceló.");
+    assert_eq!(err, crate::commands::timeout_message(1));
     assert!(started.elapsed() < Duration::from_secs(4), "{:?}", started.elapsed());
     // The editor connection is still usable.
     assert_eq!(scalar(state, id, "SELECT 1").await, SqlValue::Int(1));
@@ -350,7 +350,7 @@ async fn assert_timeouts(state: &AppState, id: &ConnectionId, sleep: &str, table
         batch(state, id, &[&format!("INSERT INTO {table} VALUES (1)"), &format!("SELECT {sleep}")])
             .await
             .expect_err("batch timeout");
-    assert_eq!(err, "La consulta superó el tiempo límite de 1 s y se canceló.");
+    assert_eq!(err, crate::commands::timeout_message(1));
     assert!(started.elapsed() < Duration::from_secs(4));
     assert_eq!(scalar(state, id, &format!("SELECT count(*) FROM {table}")).await, SqlValue::Int(0));
 }

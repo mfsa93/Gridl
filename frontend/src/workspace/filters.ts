@@ -1,4 +1,5 @@
 import { quoteIdent, type DatabaseEngine, type TableSchema } from "../lib/api";
+import { t } from "../lib/i18n";
 import { textLiteral } from "./export";
 
 export type FilterOp =
@@ -37,14 +38,14 @@ export const filterOps: { op: FilterOp; label: string }[] = [
   { op: ">", label: ">" },
   { op: "<=", label: "≤" },
   { op: ">=", label: "≥" },
-  { op: "contains", label: "contiene" },
-  { op: "not-contains", label: "no contiene" },
-  { op: "starts", label: "empieza con" },
-  { op: "ends", label: "termina con" },
-  { op: "in", label: "en lista" },
-  { op: "null", label: "es NULL" },
-  { op: "not-null", label: "no es NULL" },
-  { op: "sql", label: "SQL libre" },
+  { op: "contains", label: t("filter.op.contains") },
+  { op: "not-contains", label: t("filter.op.notContains") },
+  { op: "starts", label: t("filter.op.starts") },
+  { op: "ends", label: t("filter.op.ends") },
+  { op: "in", label: t("filter.op.in") },
+  { op: "null", label: t("filter.op.null") },
+  { op: "not-null", label: t("filter.op.notNull") },
+  { op: "sql", label: t("filter.op.sql") },
 ];
 
 export function opTakesValue(op: FilterOp): boolean {

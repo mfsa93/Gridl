@@ -1,6 +1,7 @@
 import { Braces, ChevronDown, ChevronLeft, ChevronRight, Hash, ListTree, Table2, Zap } from "lucide-react";
 import { type ReactNode } from "react";
 import { type TableSchema } from "../lib/api";
+import { formatNumber, t } from "../lib/i18n";
 import { pageSizes, type TablePage } from "./model";
 
 export function PaneSplitter({ label, axis = "x", onDrag }: { label: string; axis?: "x" | "y"; onDrag: (delta: number) => void }) {
@@ -59,14 +60,14 @@ export function TablePager({
   return (
     <div className="pager">
       <button type="button" disabled={running || current <= 0} onClick={() => onPage(current - 1)}>
-        <ChevronLeft size={14} /> Anterior
+        <ChevronLeft size={14} /> {t("chrome.previous")}
       </button>
       <button type="button" disabled={running || current + 1 >= pageCount} onClick={() => onPage(current + 1)}>
-        Siguiente <ChevronRight size={14} />
+        {t("chrome.next")} <ChevronRight size={14} />
       </button>
-      <span>{page ? `${from.toLocaleString("es")}–${to.toLocaleString("es")} de ${total.toLocaleString("es")}` : "Cargando…"}</span>
+      <span>{page ? t("chrome.range", { from: formatNumber(from), to: formatNumber(to), total: formatNumber(total) }) : t("chrome.loading")}</span>
       <label>
-        Filas
+        {t("chrome.rows")}
         <select value={pageSize} disabled={running} onChange={(event) => onPageSize(Number(event.target.value))}>
           {pageSizes.map((size) => (
             <option key={size} value={size}>{size}</option>
@@ -74,7 +75,7 @@ export function TablePager({
         </select>
       </label>
       {running ? (
-        <button type="button" onClick={onCancel}>Cancelar</button>
+        <button type="button" onClick={onCancel}>{t("chrome.cancel")}</button>
       ) : null}
     </div>
   );
@@ -102,7 +103,7 @@ export function TreeBranch({
   return (
     <div>
       <div className={active ? `tree-item schema-row ${depth} active` : `tree-item schema-row ${depth}`}>
-        <button type="button" className="tree-toggle" aria-expanded={open} aria-label={open ? `Contraer ${label}` : `Expandir ${label}`} onClick={onToggle}>
+        <button type="button" className="tree-toggle" aria-expanded={open} aria-label={t(open ? "chrome.collapse" : "chrome.expand", { name: label })} onClick={onToggle}>
           {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
         </button>
         {icon}

@@ -9,6 +9,7 @@ import {
   columnTypeSpecs,
   type ColumnDraft,
 } from "./changes";
+import { t } from "../lib/i18n";
 
 type StructureEditorProps = {
   table: TableSchema;
@@ -111,10 +112,10 @@ export function StructureEditor({ table, engine, busy, error, onApply, draft, on
           <thead>
             <tr>
               <th className="col-index">#</th>
-              <th>Nombre</th>
-              <th>Tipo</th>
+              <th>{t("dialog.name")}</th>
+              <th>{t("dialog.type")}</th>
               <th className="col-null">NULL</th>
-              <th>Predeterminado</th>
+              <th>{t("dialog.table.default")}</th>
               <th className="col-action" />
             </tr>
           </thead>
@@ -130,17 +131,17 @@ export function StructureEditor({ table, engine, busy, error, onApply, draft, on
                   <td className="col-index">{row.primaryKey ? "pk" : index + 1}</td>
                   <td>
                     <input
-                      aria-label="Nombre de la columna"
+                      aria-label={t("structure.columnName")}
                       value={row.name}
                       disabled={busy || row.dropped}
-                      placeholder="nueva columna"
+                      placeholder={t("structure.newColumn")}
                       onChange={(event) => patch(row.key, { name: event.target.value })}
                     />
                   </td>
                   <td>
                     <div className="type-cell">
                       <select
-                        aria-label="Tipo"
+                        aria-label={t("dialog.type")}
                         value={row.dataType}
                         disabled={busy || row.dropped || locked}
                         onChange={(event) => patch(row.key, { dataType: event.target.value, length: "", precision: "", scale: "" })}
@@ -151,11 +152,11 @@ export function StructureEditor({ table, engine, busy, error, onApply, draft, on
                       </select>
                       {spec?.kind === "length" ? (
                         <input
-                          aria-label="Longitud"
+                          aria-label={t("dialog.length")}
                           className="type-size"
                           value={row.length}
                           disabled={busy || row.dropped || locked}
-                          placeholder="n"
+                          placeholder={t("structure.lengthPlaceholder")}
                           inputMode="numeric"
                           onChange={(event) => patch(row.key, { length: event.target.value })}
                         />
@@ -163,20 +164,20 @@ export function StructureEditor({ table, engine, busy, error, onApply, draft, on
                       {spec?.kind === "numeric" ? (
                         <>
                           <input
-                            aria-label="Precisión"
+                            aria-label={t("dialog.precision")}
                             className="type-size"
                             value={row.precision}
                             disabled={busy || row.dropped || locked}
-                            placeholder="p"
+                            placeholder={t("structure.precisionPlaceholder")}
                             inputMode="numeric"
                             onChange={(event) => patch(row.key, { precision: event.target.value })}
                           />
                           <input
-                            aria-label="Escala"
+                            aria-label={t("dialog.scale")}
                             className="type-size"
                             value={row.scale}
                             disabled={busy || row.dropped || locked}
-                            placeholder="e"
+                            placeholder={t("structure.scalePlaceholder")}
                             inputMode="numeric"
                             onChange={(event) => patch(row.key, { scale: event.target.value })}
                           />
@@ -186,18 +187,18 @@ export function StructureEditor({ table, engine, busy, error, onApply, draft, on
                   </td>
                   <td>
                     <select
-                      aria-label="Acepta NULL"
+                      aria-label={t("dialog.nullable")}
                       value={row.nullable ? "yes" : "no"}
                       disabled={busy || row.dropped || locked || generated || row.primaryKey}
                       onChange={(event) => patch(row.key, { nullable: event.target.value === "yes" })}
                     >
-                      <option value="yes">Sí</option>
-                      <option value="no">No</option>
+                      <option value="yes">{t("structure.yes")}</option>
+                      <option value="no">{t("structure.no")}</option>
                     </select>
                   </td>
                   <td>
                     <input
-                      aria-label="Valor predeterminado"
+                      aria-label={t("dialog.defaultValue")}
                       value={row.defaultValue}
                       disabled={busy || row.dropped || locked || generated}
                       placeholder="—"
@@ -209,7 +210,7 @@ export function StructureEditor({ table, engine, busy, error, onApply, draft, on
                       <button
                         type="button"
                         className="tiny-icon"
-                        aria-label={row.dropped ? `Restaurar ${row.name || "columna"}` : `Quitar ${row.name || "columna"}`}
+                        aria-label={t(row.dropped ? "structure.restore" : "structure.remove", { name: row.name || t("structure.column") })}
                         disabled={busy}
                         onClick={() => (row.dropped ? patch(row.key, { dropped: false }) : removeRow(row))}
                       >
@@ -226,22 +227,22 @@ export function StructureEditor({ table, engine, busy, error, onApply, draft, on
       <div className="structure-bar">
         <span>
           {confirmDrop
-            ? `Se quitan ${dropped.map((row) => row.originalName).join(", ")} y sus datos.`
+            ? t("structure.confirmDrop", { columns: dropped.map((row) => row.originalName).join(", ") })
             : localError || error
               ? localError || error
               : engine === "sqlite"
-                ? "En SQLite una columna existente solo se puede renombrar o quitar."
-                : "La última fila agrega una columna."}
+                ? t("structure.sqliteNote")
+                : t("structure.lastRowAdds")}
         </span>
         {dirty ? (
           <div className="structure-actions">
             {confirmDrop ? (
               <button type="button" className="toolbar-button" disabled={busy} onClick={() => setConfirmDrop(false)}>
-                Volver
+                {t("structure.back")}
               </button>
             ) : null}
             <button type="button" className="run-button" disabled={busy} onClick={save}>
-              {confirmDrop ? "Quitar y guardar" : "Guardar"}
+              {confirmDrop ? t("structure.removeAndSave") : t("structure.save")}
               {confirmDrop ? null : <kbd>{saveShortcut}</kbd>}
             </button>
           </div>

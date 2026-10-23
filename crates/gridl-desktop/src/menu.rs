@@ -1,3 +1,4 @@
+use gridl_core::tr;
 use tauri::menu::{AboutMetadata, Menu, MenuItem, PredefinedMenuItem, Submenu, WINDOW_SUBMENU_ID};
 use tauri::{AppHandle, Runtime};
 
@@ -10,44 +11,68 @@ pub fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
         ..Default::default()
     };
 
-    let conexiones = Submenu::with_items(
+    let connections = Submenu::with_items(
         app,
-        "Conexiones",
+        tr!("Connections", "Conexiones"),
         true,
         &[
-            &MenuItem::with_id(app, "new-connection", "Nueva conexión", true, Some("CmdOrCtrl+N"))?,
-            &MenuItem::with_id(app, "new-group", "Nuevo grupo", true, Some("CmdOrCtrl+Shift+G"))?,
+            &MenuItem::with_id(
+                app,
+                "new-connection",
+                tr!("New Connection", "Nueva conexión"),
+                true,
+                Some("CmdOrCtrl+N"),
+            )?,
+            &MenuItem::with_id(
+                app,
+                "new-group",
+                tr!("New Group", "Nuevo grupo"),
+                true,
+                Some("CmdOrCtrl+Shift+G"),
+            )?,
             &PredefinedMenuItem::separator(app)?,
-            &MenuItem::with_id(app, "reload", "Recargar datos", true, Some("CmdOrCtrl+R"))?,
+            &MenuItem::with_id(
+                app,
+                "reload",
+                tr!("Reload Data", "Recargar datos"),
+                true,
+                Some("CmdOrCtrl+R"),
+            )?,
         ],
     )?;
 
     let edit = Submenu::with_items(
         app,
-        "Edición",
+        tr!("Edit", "Edición"),
         true,
         &[
-            &PredefinedMenuItem::undo(app, Some("Deshacer"))?,
-            &PredefinedMenuItem::redo(app, Some("Rehacer"))?,
+            &PredefinedMenuItem::undo(app, Some(&tr!("Undo", "Deshacer")))?,
+            &PredefinedMenuItem::redo(app, Some(&tr!("Redo", "Rehacer")))?,
             &PredefinedMenuItem::separator(app)?,
-            &PredefinedMenuItem::cut(app, Some("Cortar"))?,
-            &PredefinedMenuItem::copy(app, Some("Copiar"))?,
-            &PredefinedMenuItem::paste(app, Some("Pegar"))?,
-            &PredefinedMenuItem::select_all(app, Some("Seleccionar todo"))?,
+            &PredefinedMenuItem::cut(app, Some(&tr!("Cut", "Cortar")))?,
+            &PredefinedMenuItem::copy(app, Some(&tr!("Copy", "Copiar")))?,
+            &PredefinedMenuItem::paste(app, Some(&tr!("Paste", "Pegar")))?,
+            &PredefinedMenuItem::select_all(app, Some(&tr!("Select All", "Seleccionar todo")))?,
         ],
     )?;
 
     let window = Submenu::with_id_and_items(
         app,
         WINDOW_SUBMENU_ID,
-        "Ventana",
+        tr!("Window", "Ventana"),
         true,
         &[
-            &PredefinedMenuItem::minimize(app, Some("Minimizar"))?,
+            &PredefinedMenuItem::minimize(app, Some(&tr!("Minimize", "Minimizar")))?,
             &PredefinedMenuItem::maximize(app, Some("Zoom"))?,
             #[cfg(target_os = "macos")]
             &PredefinedMenuItem::separator(app)?,
-            &MenuItem::with_id(app, "close-tab", "Cerrar pestaña", true, Some("CmdOrCtrl+W"))?,
+            &MenuItem::with_id(
+                app,
+                "close-tab",
+                tr!("Close Tab", "Cerrar pestaña"),
+                true,
+                Some("CmdOrCtrl+W"),
+            )?,
         ],
     )?;
 
@@ -60,52 +85,66 @@ pub fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
                 pkg.name.clone(),
                 true,
                 &[
-                    &PredefinedMenuItem::about(app, Some("Acerca de Gridl"), Some(about))?,
+                    &PredefinedMenuItem::about(
+                        app,
+                        Some(&tr!("About Gridl", "Acerca de Gridl")),
+                        Some(about),
+                    )?,
                     &MenuItem::with_id(
                         app,
                         "check-updates",
-                        "Buscar actualizaciones…",
+                        tr!("Check for Updates…", "Buscar actualizaciones…"),
                         true,
                         None::<&str>,
                     )?,
                     &PredefinedMenuItem::separator(app)?,
                     &PredefinedMenuItem::services(app, None)?,
                     &PredefinedMenuItem::separator(app)?,
-                    &PredefinedMenuItem::hide(app, Some("Ocultar Gridl"))?,
-                    &PredefinedMenuItem::hide_others(app, Some("Ocultar otros"))?,
-                    &PredefinedMenuItem::show_all(app, Some("Mostrar todo"))?,
+                    &PredefinedMenuItem::hide(app, Some(&tr!("Hide Gridl", "Ocultar Gridl")))?,
+                    &PredefinedMenuItem::hide_others(
+                        app,
+                        Some(&tr!("Hide Others", "Ocultar otros")),
+                    )?,
+                    &PredefinedMenuItem::show_all(app, Some(&tr!("Show All", "Mostrar todo")))?,
                     &PredefinedMenuItem::separator(app)?,
-                    &PredefinedMenuItem::quit(app, Some("Salir de Gridl"))?,
+                    &PredefinedMenuItem::quit(app, Some(&tr!("Quit Gridl", "Salir de Gridl")))?,
                 ],
             )?,
             #[cfg(not(target_os = "macos"))]
             &Submenu::with_items(
                 app,
-                "Archivo",
+                tr!("File", "Archivo"),
                 true,
-                &[&PredefinedMenuItem::quit(app, Some("Salir"))?],
+                &[&PredefinedMenuItem::quit(app, Some(&tr!("Quit", "Salir")))?],
             )?,
-            &conexiones,
+            &connections,
             &edit,
             #[cfg(target_os = "macos")]
             &Submenu::with_items(
                 app,
-                "Visualización",
+                tr!("View", "Visualización"),
                 true,
-                &[&PredefinedMenuItem::fullscreen(app, Some("Pantalla completa"))?],
+                &[&PredefinedMenuItem::fullscreen(
+                    app,
+                    Some(&tr!("Enter Full Screen", "Pantalla completa")),
+                )?],
             )?,
             &window,
             #[cfg(not(target_os = "macos"))]
             &Submenu::with_items(
                 app,
-                "Ayuda",
+                tr!("Help", "Ayuda"),
                 true,
                 &[
-                    &PredefinedMenuItem::about(app, Some("Acerca de Gridl"), Some(about))?,
+                    &PredefinedMenuItem::about(
+                        app,
+                        Some(&tr!("About Gridl", "Acerca de Gridl")),
+                        Some(about),
+                    )?,
                     &MenuItem::with_id(
                         app,
                         "check-updates",
-                        "Buscar actualizaciones…",
+                        tr!("Check for Updates…", "Buscar actualizaciones…"),
                         true,
                         None::<&str>,
                     )?,

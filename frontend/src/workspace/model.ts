@@ -1,6 +1,7 @@
 import { formatSqlValue, type ColumnDefinition, type SqlValue, type TableSchema } from "../lib/api";
 import { isGeneratedColumn, canonicalTemporal, isTemporalColumn, type CellField } from "./changes";
 import { type ShownError } from "../lib/errors";
+import { plural, t } from "../lib/i18n";
 import { type TableFilter, type TableSort } from "./filters";
 
 export const sqlTabId = "sql";
@@ -89,7 +90,7 @@ export function viewKey(page: number, pageSize: number, query: TableQuery | unde
 
 export function viewLabel(page: number, query: TableQuery | undefined): string {
   const filtered = (query?.filters ?? []).some((filter) => filter.enabled);
-  return `página ${page + 1}${filtered ? " filtrada" : ""}`;
+  return t(filtered ? "model.pageFiltered" : "model.page", { page: page + 1 });
 }
 
 export function primaryKeyList(table: TableSchema, columns: ColumnDefinition[], rows: SqlValue[][]): string {
@@ -116,13 +117,13 @@ export function showsRows(table: TableSchema) {
 }
 
 export const objectGroups: { kind: TableSchema["kind"]; label: string }[] = [
-  { kind: "view", label: "Vistas" },
-  { kind: "materialized", label: "Vistas materializadas" },
-  { kind: "function", label: "Funciones" },
-  { kind: "procedure", label: "Procedimientos" },
-  { kind: "sequence", label: "Secuencias" },
-  { kind: "trigger", label: "Triggers" },
-  { kind: "index", label: "Índices" },
+  { kind: "view", label: t("model.group.view") },
+  { kind: "materialized", label: t("model.group.materialized") },
+  { kind: "function", label: t("model.group.function") },
+  { kind: "procedure", label: t("model.group.procedure") },
+  { kind: "sequence", label: t("model.group.sequence") },
+  { kind: "trigger", label: t("model.group.trigger") },
+  { kind: "index", label: t("model.group.index") },
 ];
 
 export function schemaMap(tables: TableSchema[]): Record<string, string[]> {
@@ -135,26 +136,27 @@ export function schemaMap(tables: TableSchema[]): Record<string, string[]> {
 }
 
 
-export function describePending(edit: PendingChanges | undefined): string {
+/** "2 rows changed, 1 new row", without the call to save. */
+export function pendingSummary(edit: PendingChanges | undefined): string {
   if (!edit) return "";
   const parts: string[] = [];
   const changed = Object.keys(edit.edits ?? {}).length;
-  if (changed === 1) parts.push("1 fila modificada");
-  else if (changed > 1) parts.push(`${changed} filas modificadas`);
-  if (edit.inserts.length === 1) parts.push("1 fila nueva");
-  else if (edit.inserts.length > 1) parts.push(`${edit.inserts.length} filas nuevas`);
-  if (edit.removed.length === 1) parts.push("1 fila por borrar");
-  else if (edit.removed.length > 1) parts.push(`${edit.removed.length} filas por borrar`);
-  return parts.length > 0 ? `${parts.join(", ")}. Guarda para aplicar.` : "";
+  if (changed > 0) parts.push(plural("model.changed", changed));
+  if (edit.inserts.length > 0) parts.push(plural("model.inserted", edit.inserts.length));
+  if (edit.removed.length > 0) parts.push(plural("model.removed", edit.removed.length));
+  return parts.join(", ");
+}
+
+export function describePending(edit: PendingChanges | undefined): string {
+  const summary = pendingSummary(edit);
+  return summary ? t("model.pending", { summary }) : "";
 }
 
 /** Status text for a tab's pending edits, counting the ones kept on other pages. */
 export function describeTabChanges(edit: PendingChanges | undefined, others: PageStash[]): string {
-  const here = describePending(edit);
-  if (others.length === 0) return here;
-  const pages = others.length === 1 ? "1 página más" : `${others.length} páginas más`;
-  const prefix = here ? here.replace(/\. Guarda para aplicar\.$/, "") + ". " : "";
-  return `${prefix}También hay cambios en ${pages}. Guarda para aplicar todo.`;
+  if (others.length === 0) return describePending(edit);
+  const summary = pendingSummary(edit);
+  return summary ? plural("model.pendingAndOtherPages", others.length, { summary }) : plural("model.otherPages", others.length);
 }
 
 export function pastedValue(text: string, column: ColumnDefinition): SqlValue {

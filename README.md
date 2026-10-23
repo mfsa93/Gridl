@@ -2,7 +2,7 @@
 
 A desktop database client that looks and feels like a macOS app. It works with **PostgreSQL**, **MySQL / MariaDB**, and **SQLite**. The UI runs on Tauri 2 and the data engine is a standalone Rust crate, with no Electron: the app weighs about 20 MB and uses a fraction of the memory of Electron or Java based clients.
 
-The app's interface is currently in Spanish.
+Gridl is available in English and Spanish and follows the system language.
 
 - [Install](#install)
 - [Getting started](#getting-started)
@@ -49,13 +49,13 @@ The Terminal installer avoids this step because files downloaded with `curl` are
 
 ### Updates
 
-Gridl checks for a new version when it starts, and from **Gridl → Buscar actualizaciones…** (Check for Updates). When there is one, it shows the release notes and installs it with **Instalar y reiniciar** (Install and Restart). Every update is signed, and the app rejects any file without a valid signature. If you have unsaved changes, it asks before restarting.
+Gridl checks for a new version when it starts, and from **Gridl → Check for Updates…** (**Buscar actualizaciones…** in Spanish). When there is one, it shows the release notes and installs it with **Install and Restart**. Every update is signed, and the app rejects any file without a valid signature. If you have unsaved changes, it asks before restarting.
 
 Running the install script again also updates to the latest version.
 
 ### Optional tools
 
-The **Respaldo** (Backup) menu uses each engine's command line tools. For PostgreSQL and MySQL, install them with:
+The **Backup** menu uses each engine's command line tools. For PostgreSQL and MySQL, install them with:
 
 ```bash
 brew install libpq mysql-client
@@ -69,11 +69,11 @@ Delete `/Applications/Gridl.app`. Saved connections live in `~/Library/Applicati
 
 ## Getting started
 
-1. Click **Nueva conexión** (New Connection, ⌘N), pick the engine, and fill in host, port, database, and user. For SQLite, just choose the file.
-2. Optionally check **Guardar contraseña en el llavero** (save password in the Keychain). The password is never written to the connections file.
-3. The **SSL** and **Túnel** tabs configure TLS with certificates or an SSH tunnel with a key or password.
-4. At the bottom of **General**, pick the **environment** (Local, Development, Staging, or Production) and, under **Reglas de seguridad**, what that connection is allowed to do. See [Per-environment safety](#per-environment-safety).
-5. **Probar** (Test) checks the connection without saving it; **Conectar** (Connect) saves and opens it.
+1. Click **New Connection** (⌘N), pick the engine, and fill in host, port, database, and user. For SQLite, just choose the file.
+2. Optionally check **Save password in the keychain**. The password is never written to the connections file.
+3. The **SSL** and **Tunnel** tabs configure TLS with certificates or an SSH tunnel with a key or password.
+4. At the bottom of **General**, pick the **environment** (Local, Development, Staging, or Production) and, under **Safety rules**, what that connection is allowed to do. See [Per-environment safety](#per-environment-safety).
+5. **Test** checks the connection without saving it; **Connect** saves and opens it.
 
 Right-click a connection to edit, duplicate, remove, or open it in a new window (⌘-click does the same). Each window has its own connection.
 
@@ -84,26 +84,26 @@ Right-click a connection to edit, duplicate, remove, or open it in a new window 
 - Errors underlined as you type: each statement is prepared on the server, without running, and the problem is marked where it is.
 - Run the statement under the cursor (⌘↵) or the whole script (⇧⌘↵), format (⌘I), and truly cancel a running query on the server.
 - Query history with search and favorites.
-- Results show up to 10,000 rows; when there are more, **Cargar hasta 100.000 filas** fetches the rest on demand.
+- Results show up to 10,000 rows; when there are more, **Load up to 100,000 rows** fetches the rest on demand.
 - Transactions behave as in a terminal: `BEGIN`, `SET`, and temporary tables persist across queries.
 
 **Tables**
 - Paging, per-column filters (including free SQL), and sorting by clicking a header.
 - Columns fit their content automatically; right-click a header to refit them.
-- A **Fila** (Row) panel with every value and formatted JSON.
+- A **Row** panel with every value and formatted JSON.
 - Right-click a cell: open the related row through a foreign key, copy, copy as `INSERT`, filter by that value, set NULL, or delete.
 - Select cells or rows (click the row number) to copy (⌘C), paste (⌘V), or delete (⌫).
 
 **Editing data**
 - Edit cells, add rows, paste from Excel or Numbers, and mark rows for deletion.
-- Nothing is written until you click **Guardar** (Save, ⌘S). **SQL** shows the exact statements first.
+- Nothing is written until you click **Save** (⌘S). **SQL** shows the exact statements first.
 - Everything is applied in **a single transaction**: if one row fails, none is saved.
 - Changes survive page changes, filtering, and sorting, and are saved together. Gridl warns before you leave the connection, close a tab, or quit with anything unsaved.
 
 **Structure**
 - Add, rename, change, or drop columns.
 - Relations (foreign keys): view, create, and drop them, and jump to the related table.
-- **Nueva tabla** (New Table) with type, size, default, primary key (composite too), not null, unique, and references, with a live `CREATE TABLE` preview.
+- **New table** with type, size, default, primary key (composite too), not null, unique, and references, with a live `CREATE TABLE` preview.
 
 **Data in and out**
 - Export to CSV, JSON, or SQL `INSERT`s. For a table, every row matching the filter is exported, straight to the file without loading it into memory.
@@ -113,7 +113,7 @@ Right-click a connection to edit, duplicate, remove, or open it in a new window 
 **Connections**
 - TLS with certificate verification, an SSH tunnel with server fingerprint verification, and passwords in the system keychain.
 - Read-only mode enforced by the server itself, not just the UI.
-- If the connection drops (sleep, VPN, tunnel), **Reconectar** brings it back.
+- If the connection drops (sleep, VPN, tunnel), **Reconnect** brings it back.
 - Light and dark mode following the system appearance.
 
 ## Per-environment safety
@@ -132,7 +132,7 @@ Each connection has an environment and a set of rules. Picking the environment s
 - **Always confirm destructive operations** (on by default): `DELETE` or `UPDATE` without `WHERE`, `DROP`, and `TRUNCATE` ask for confirmation even locally.
 - **Time limit**: the query is cancelled on the server after that time.
 
-The rules are enforced in the backend, before the statement reaches the database, and cover the editor, the grid, structure changes, imports, and restores. Gridl judges by the statement's shape: it cannot know what a function does inside (`SELECT purge_everything()` counts as a read). For a hard block, also turn on **Solo lectura** (read-only), which the server enforces.
+The rules are enforced in the backend, before the statement reaches the database, and cover the editor, the grid, structure changes, imports, and restores. Gridl judges by the statement's shape: it cannot know what a function does inside (`SELECT purge_everything()` counts as a read). For a hard block, also turn on **Read-only**, which the server enforces.
 
 ## Keyboard shortcuts
 

@@ -17,6 +17,7 @@ use super::{batch_err, db_err, elapsed_ms};
 use crate::driver::{ChunkSink, DatabaseDriver};
 use crate::error::CoreError;
 use crate::secret::SecretString;
+use crate::tr;
 use crate::types::ForeignKey;
 use crate::types::{
     BatchRequest, BatchResult, ColumnDefinition, ConnectionConfig, ConnectionId, DatabaseEngine,
@@ -489,10 +490,12 @@ fn pg_options(
             "postgres driver received a non-postgres connection".into(),
         ));
     }
-    let username = config
-        .username
-        .as_deref()
-        .ok_or_else(|| CoreError::InvalidConfig("postgres username is required".into()))?;
+    let username = config.username.as_deref().ok_or_else(|| {
+        CoreError::InvalidConfig(tr!(
+            "PostgreSQL needs a username",
+            "PostgreSQL necesita un usuario"
+        ))
+    })?;
     let (host, port) = match endpoint {
         Some((host, port)) => (host.as_str(), *port),
         None => (config.host.as_deref().unwrap_or("localhost"), config.port.unwrap_or(5432)),

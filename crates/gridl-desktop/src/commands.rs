@@ -15,6 +15,7 @@ use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, State, Window};
 
 use crate::state::AppState;
+use gridl_core::tr;
 use gridl_core::ForeignKey;
 use gridl_core::GuardMode;
 
@@ -318,7 +319,11 @@ pub(crate) async fn run_query(
     let timeout = statement_timeout(state, id.as_str());
     let cancel = Arc::new(AtomicBool::new(false));
     if !state.register_cancel(&request.query_id, Arc::clone(&cancel)).map_err(fail)? {
-        return Err(format!("query '{}' is already running", request.query_id));
+        let query_id = &request.query_id;
+        return Err(tr!(
+            "the query '{query_id}' is already running",
+            "la consulta '{query_id}' ya se está ejecutando"
+        ));
     }
     let _guard = CancelGuard { state, query_id: request.query_id.clone() };
     let max_rows = request.max_rows.unwrap_or(MAX_STREAM_ROWS).clamp(1, MAX_STREAM_ROWS);
@@ -347,7 +352,10 @@ fn statement_timeout(state: &AppState, id: &str) -> Option<u32> {
 }
 
 pub(crate) fn timeout_message(seconds: u32) -> String {
-    format!("La consulta superó el tiempo límite de {seconds} s y se canceló.")
+    tr!(
+        "The query exceeded the {seconds} s limit and was cancelled.",
+        "La consulta superó el tiempo límite de {seconds} s y se canceló."
+    )
 }
 
 /// Sets a query's cancel flag after the time limit. Dropping it stops the clock.
@@ -462,7 +470,7 @@ pub(crate) async fn run_batch(
 pub async fn write_export(path: String, contents: String) -> Result<(), String> {
     let path = export_path(&path)?;
     if contents.len() > MAX_EXPORT_BYTES {
-        return Err("el archivo supera 512 MiB".into());
+        return Err(tr!("the file is larger than 512 MiB", "el archivo supera 512 MiB"));
     }
     tokio::task::spawn_blocking(move || std::fs::write(&path, contents.as_bytes()))
         .await
@@ -479,10 +487,13 @@ pub(crate) fn export_path(path: &str) -> Result<PathBuf, String> {
         .map(str::to_ascii_lowercase)
         .unwrap_or_default();
     if !EXPORT_EXTENSIONS.contains(&extension.as_str()) {
-        return Err(format!("extensión no permitida: .{extension}"));
+        return Err(tr!(
+            "extension not allowed: .{extension}",
+            "extensión no permitida: .{extension}"
+        ));
     }
     if path.is_dir() {
-        return Err("la ruta es una carpeta".into());
+        return Err(tr!("the path is a folder", "la ruta es una carpeta"));
     }
     Ok(path)
 }
@@ -564,12 +575,12 @@ async fn probe_connection(
     drop(link.tunnel);
     let version = probed?;
     let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-    let route = if link.fingerprint.is_some() { " por túnel SSH" } else { "" };
-    Ok(TestResponse {
-        message: format!("Conexión correcta{route} · {version}"),
-        duration_ms,
-        host_fingerprint: link.fingerprint,
-    })
+    let message = if link.fingerprint.is_some() {
+        tr!("Connected through SSH · {version}", "Conexión correcta por túnel SSH · {version}")
+    } else {
+        tr!("Connected · {version}", "Conexión correcta · {version}")
+    };
+    Ok(TestResponse { message, duration_ms, host_fingerprint: link.fingerprint })
 }
 
 struct Link {
@@ -686,7 +697,7 @@ mod tests {
         ConnectionConfig, ConnectionId, DatabaseEngine, Environment, GuardMode, SafetySettings,
     };
 
-    use super::{guard, guard_restore, GUARD_PREFIX};
+    use super::{guard, guard_restore, timeout_message, GUARD_PREFIX};
     use crate::state::AppState;
 
     pub(crate) fn sqlite_config(
@@ -744,6 +755,32 @@ mod tests {
         assert!(guard(&state, "prod", &["select 1", "begin"], false).is_ok());
         let batch = guard(&state, "prod", &["select 1", "drop table t"], true).expect_err("batch");
         assert!(batch.contains("\"mode\":\"block\""));
+    }
+
+    #[test]
+    fn messages_follow_the_language() {
+        use gridl_core::{with_locale, Locale};
+
+        assert_eq!(
+            with_locale(Locale::En, || timeout_message(30)),
+            "The query exceeded the 30 s limit and was cancelled."
+        );
+        assert_eq!(
+            with_locale(Locale::Es, || timeout_message(30)),
+            "La consulta superó el tiempo límite de 30 s y se canceló."
+        );
+        let state = AppState::new();
+        session(&state, "stg", GuardMode::Confirm, GuardMode::Confirm);
+        let refusal = |locale| {
+            with_locale(locale, || guard(&state, "stg", &["insert into t values (1)"], false))
+                .expect_err("asks")
+        };
+        // The payload keeps its shape; only the reason is translated.
+        let english = refusal(Locale::En);
+        let spanish = refusal(Locale::Es);
+        assert!(english.starts_with(GUARD_PREFIX) && spanish.starts_with(GUARD_PREFIX));
+        assert!(english.contains(r#""reason":"modifies data""#), "{english}");
+        assert!(spanish.contains(r#""reason":"modifica datos""#), "{spanish}");
     }
 
     #[test]
