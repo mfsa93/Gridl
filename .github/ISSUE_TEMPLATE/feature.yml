@@ -1,0 +1,15 @@
+name: Propuesta
+description: Una idea o una función que te falta
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Qué necesitas hacer
+      description: El problema o la tarea, antes que la solución.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: Cómo lo imaginas

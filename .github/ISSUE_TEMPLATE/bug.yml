@@ -1,0 +1,31 @@
+name: Error
+description: Algo no funciona como debería
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: Qué pasó
+      description: Qué hiciste, qué esperabas y qué viste. Una captura ayuda mucho.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Versión de Gridl
+      description: Gridl → Acerca de Gridl
+      placeholder: "0.2.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: engine
+    attributes:
+      label: Motor
+      options: [PostgreSQL, MySQL / MariaDB, SQLite, No aplica]
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: Versión de macOS
+      placeholder: "15.4"
