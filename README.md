@@ -1,6 +1,6 @@
 # Gridl
 
-A free, open source desktop database client that looks and feels like a macOS app. It works with **PostgreSQL**, **MySQL / MariaDB**, and **SQLite**. The UI runs on Tauri 2 and the data engine is a standalone Rust crate, with no Electron: the app weighs about 20 MB and uses a fraction of the memory of Electron or Java based clients.
+A desktop database client that looks and feels like a macOS app. It works with **PostgreSQL**, **MySQL / MariaDB**, and **SQLite**. The UI runs on Tauri 2 and the data engine is a standalone Rust crate, with no Electron: the app weighs about 20 MB and uses a fraction of the memory of Electron or Java based clients.
 
 The app's interface is currently in Spanish.
 
