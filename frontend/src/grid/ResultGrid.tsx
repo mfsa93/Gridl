@@ -835,8 +835,8 @@ export function ResultGrid({
             if (cell[1] >= rowCount || removedSet.has(cell[1])) return;
             onOpenRow(cell[1]);
           }}
-          smoothScrollX={false}
-          smoothScrollY={false}
+          smoothScrollX
+          smoothScrollY
           getCellsForSelection
           theme={GRID_THEMES[scheme]}
         />
