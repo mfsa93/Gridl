@@ -1,0 +1,9 @@
+/target
+**/*.rs.bk
+**/gen/schemas
+
+node_modules
+frontend/dist
+.DS_Store
+*.log
+.pnpm-store

@@ -1,0 +1,11 @@
+{
+  "name": "gridl",
+  "private": true,
+  "packageManager": "pnpm@10.9.0",
+  "scripts": {
+    "dev": "cd crates/gridl-desktop && ../../frontend/node_modules/.bin/tauri dev",
+    "build": "cd crates/gridl-desktop && ../../frontend/node_modules/.bin/tauri build",
+    "lint": "pnpm --dir frontend lint",
+    "check": "cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace && pnpm lint && pnpm --dir frontend exec tsc --noEmit"
+  }
+}

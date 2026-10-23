@@ -1,0 +1,38 @@
+[workspace]
+resolver = "2"
+members = ["crates/gridl-core", "crates/gridl-desktop"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+rust-version = "1.88"
+publish = false
+
+[workspace.dependencies]
+async-trait = "0.1"
+base64 = "0.22"
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+dunce = "1"
+futures-util = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sqlx = { version = "0.8.6", default-features = false, features = [
+    "runtime-tokio-rustls",
+    "sqlite",
+    "postgres",
+    "mysql",
+    "chrono",
+    "json",
+    "uuid",
+] }
+thiserror = "2"
+tokio = { version = "1", features = ["rt", "macros"] }
+uuid = { version = "1", default-features = false }
+zeroize = { version = "1", default-features = false, features = ["alloc"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
