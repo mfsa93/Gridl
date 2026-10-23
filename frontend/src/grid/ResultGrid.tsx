@@ -174,6 +174,32 @@ function fitColumnWidths(columns: ColumnDefinition[], rows: SqlValue[][], titles
   });
 }
 
+/** Characters drawn per cell. Copy and the editor still get the full value. */
+const DRAW_CHARS = 300;
+
+function clip(text: string): string {
+  return text.length > DRAW_CHARS ? `${text.slice(0, DRAW_CHARS)}…` : text;
+}
+
+/** What each column needs to draw its cells, worked out once per column instead of per cell. */
+type ColumnMeta = {
+  temporal: boolean;
+  temporalType: string;
+  choices: string[];
+  hasDefault: boolean;
+};
+
+function columnMeta(column: ColumnDefinition): ColumnMeta {
+  const temporal = isTemporalColumn(column);
+  return { temporal, temporalType: column.dataType, choices: columnChoices(column), hasDefault: Boolean(column.defaultValue) };
+}
+
+function sameValue(left: SqlValue | undefined, right: SqlValue | undefined): boolean {
+  if (!left || left.t === "null") return !right || right.t === "null";
+  if (!right || right.t === "null") return false;
+  return left.t === right.t && left.v === right.v;
+}
+
 function cellDisplay(value: SqlValue | undefined): string {
   if (!value || value.t === "null") return "";
   if (value.t === "text") {
@@ -182,6 +208,9 @@ function cellDisplay(value: SqlValue | undefined): string {
   }
   return formatSqlValue(value);
 }
+
+const NO_ROWS: SqlValue[][] = [];
+const NO_INDEXES: number[] = [];
 
 const emptySelection: GridSelection = {
   columns: CompactSelection.empty(),
@@ -213,17 +242,6 @@ function columnChoices(column: ColumnDefinition | undefined): string[] {
   if ((column.options ?? []).length > 0) return column.options;
   if (isBooleanColumn(column)) return ["true", "false"];
   return [];
-}
-
-function withTemporal(cell: GridCell, column: ColumnDefinition | undefined): GridCell {
-  if (!column || !isTemporalColumn(column)) return cell;
-  return Object.assign(cell, { temporalType: column.dataType, temporalDefault: Boolean(column.defaultValue) });
-}
-
-function withChoices(cell: GridCell, column: ColumnDefinition | undefined): GridCell {
-  const options = columnChoices(column);
-  if (!column || options.length === 0) return cell;
-  return Object.assign(cell, { choiceOptions: options, choiceDefault: Boolean(column.defaultValue) });
 }
 
 const temporalChoices = [
@@ -422,8 +440,8 @@ export function ResultGrid({
   rowCount,
   rowsRef,
   selectable = false,
-  inserts = [],
-  removed = [],
+  inserts = NO_ROWS,
+  removed = NO_INDEXES,
   edits,
   onEditInsert,
   onEditCell,
@@ -700,41 +718,55 @@ export function ResultGrid({
     };
   }, [columns, commitValue, onDropInserts, onMarkRows, onPaste, removedSet, rowCount, valueAt]);
 
+  const metas = useMemo(() => columns.map(columnMeta), [columns]);
+
+  // Called for every visible cell on every frame while scrolling: keep it cheap.
   const getCellContent = useCallback((cell: Item): GridCell => {
     const [col, row] = cell;
     const draftIndex = row - rowCount;
     const drafting = draftIndex >= 0 && draftIndex < shownInserts.length;
     const marked = removedSet.has(row);
+    const editedRow = drafting ? undefined : shownEdits?.[row];
     const original = rowsRef.current?.[row]?.[col];
-    const value = valueAt(row, col);
-    const changed = !drafting && cellDisplay(value) !== cellDisplay(original);
+    const value = drafting ? shownInserts[draftIndex]?.[col] : (editedRow?.[col] ?? original);
+    const changed = editedRow !== undefined && !sameValue(value, original);
     const blank = !value || value.t === "null";
     let themeOverride: Partial<Theme> | undefined;
     if (drafting || changed) themeOverride = cellThemes.draft;
     else if (marked) themeOverride = cellThemes.removed;
     else if (blank) themeOverride = cellThemes.null;
-    const column = columns[col];
+    const meta = metas[col];
+    const extra = meta?.temporal
+      ? { temporalType: meta.temporalType, temporalDefault: meta.hasDefault }
+      : meta && meta.choices.length > 0
+        ? { choiceOptions: meta.choices, choiceDefault: meta.hasDefault }
+        : null;
+    const readonly = marked || !external;
     if (!value || value.t === "null") {
-      return withChoices(withTemporal({
+      return {
         kind: GridCellKind.Text,
         data: "",
-        displayData: drafting && column?.defaultValue ? "DEFAULT" : drafting ? "" : "NULL",
+        displayData: drafting && meta?.hasDefault ? "DEFAULT" : drafting ? "" : "NULL",
         allowOverlay: !marked,
-        readonly: marked || !external,
+        readonly,
         themeOverride: themeOverride ?? cellThemes.null,
-      }, column), column);
+        ...extra,
+      } as GridCell;
     }
-    const displayData = value.t === "text" ? (temporalLabel(value.v) ?? formatSqlValue(value)) : formatSqlValue(value);
-    return withChoices(withTemporal({
+    // Markers like NOW() only appear in values the user typed, never in loaded rows.
+    const typed = drafting || changed;
+    const text = value.t === "text" ? (typed ? (temporalLabel(value.v) ?? value.v) : value.v) : formatSqlValue(value);
+    return {
       kind: GridCellKind.Text,
-      data: displayData,
-      displayData,
+      data: text,
+      displayData: clip(text),
       allowOverlay: !marked,
-      readonly: marked || !external,
+      readonly,
       contentAlign: value.t === "int" || value.t === "float" ? "right" : "left",
       themeOverride,
-    }, column), column);
-  }, [cellThemes, columns, external, removedSet, rowCount, rowsRef, shownInserts.length, valueAt]);
+      ...extra,
+    } as GridCell;
+  }, [cellThemes, external, metas, removedSet, rowCount, rowsRef, shownEdits, shownInserts]);
 
   const onCellEdited = useCallback((cell: Item, newValue: EditableGridCell) => {
     if (newValue.kind !== GridCellKind.Text) return;

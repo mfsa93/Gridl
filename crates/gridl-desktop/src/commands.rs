@@ -1,7 +1,7 @@
 use std::path::PathBuf;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use gridl_core::{
@@ -12,7 +12,7 @@ use gridl_core::{
 };
 use serde::Deserialize;
 use tauri::ipc::Channel;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Manager, State, Window};
 
 use crate::state::AppState;
 use gridl_core::ForeignKey;
@@ -55,6 +55,9 @@ pub struct ExecuteQueryRequest {
     pub sql: String,
     pub params: Vec<gridl_core::SqlValue>,
     pub chunk_rows: Option<usize>,
+    /// Rows to keep before the result counts as truncated. Capped at [`MAX_STREAM_ROWS`].
+    #[serde(default)]
+    pub max_rows: Option<u64>,
     /// The user confirmed a statement the safety policy asks about.
     #[serde(default)]
     pub authorized: bool,
@@ -73,10 +76,36 @@ pub struct ExecuteBatchRequest {
 const GUARD_PREFIX: &str = "gridl-guard:";
 
 /// Refuses SQL the connection's policy blocks, or that needs an authorization the request lacks.
-fn guard(state: &AppState, id: &str, sql: &[&str], authorized: bool) -> Result<(), String> {
+pub(crate) fn guard(
+    state: &AppState,
+    id: &str,
+    sql: &[&str],
+    authorized: bool,
+) -> Result<(), String> {
     let safety = state.safety(id).map_err(fail)?;
     let joined = sql.join(";\n");
     let verdict = gridl_core::evaluate(&safety, &joined);
+    refuse(&safety, verdict, joined, authorized)
+}
+
+/// Like [`guard`] for restoring a backup, which rewrites structure and data.
+pub(crate) fn guard_restore(
+    state: &AppState,
+    id: &str,
+    description: String,
+    authorized: bool,
+) -> Result<(), String> {
+    let safety = state.safety(id).map_err(fail)?;
+    let verdict = gridl_core::evaluate_restore(&safety);
+    refuse(&safety, verdict, description, authorized)
+}
+
+fn refuse(
+    safety: &gridl_core::SafetySettings,
+    verdict: gridl_core::Verdict,
+    joined: String,
+    authorized: bool,
+) -> Result<(), String> {
     let refused = match verdict.mode {
         GuardMode::Allow => false,
         GuardMode::Confirm => !authorized,
@@ -96,7 +125,7 @@ fn guard(state: &AppState, id: &str, sql: &[&str], authorized: bool) -> Result<(
 }
 
 /// Extensions the export command may write. The path comes from a save dialog.
-const EXPORT_EXTENSIONS: [&str; 5] = ["csv", "tsv", "json", "sql", "txt"];
+pub(crate) const EXPORT_EXTENSIONS: [&str; 5] = ["csv", "tsv", "json", "sql", "txt"];
 /// Upper bound for one exported file.
 const MAX_EXPORT_BYTES: usize = 512 * 1024 * 1024;
 
@@ -109,9 +138,10 @@ impl ChunkSink for ChannelSink {
     }
 }
 
-struct CancelGuard<'a> {
-    state: &'a AppState,
-    query_id: String,
+/// Clears a query's cancel flag when the command returns.
+pub(crate) struct CancelGuard<'a> {
+    pub state: &'a AppState,
+    pub query_id: String,
 }
 
 impl Drop for CancelGuard<'_> {
@@ -120,7 +150,7 @@ impl Drop for CancelGuard<'_> {
     }
 }
 
-fn fail(err: CoreError) -> String {
+pub(crate) fn fail(err: CoreError) -> String {
     err.to_string()
 }
 
@@ -207,13 +237,25 @@ pub async fn test_connection(
     probe_connection(&state, request).await.map_err(fail)
 }
 
+/// Opens a session owned by the calling window. When another open window
+/// already owns the connection, it focuses that window and fails with
+/// `gridl-focused:<label>` instead.
 #[tauri::command]
 pub async fn connect(
     app: AppHandle,
+    window: Window,
     state: State<'_, AppState>,
     request: ConnectRequest,
 ) -> Result<ConnectResponse, String> {
-    open_connection(&app, &state, request).await.map_err(fail)
+    let connection_id = request.config.id.clone();
+    if let Some(owner) = state.owner(&connection_id) {
+        if owner != window.label() && crate::windows::focus(&app, &owner) {
+            return Err(format!("{}{owner}", crate::windows::FOCUSED_PREFIX));
+        }
+    }
+    let response = open_connection(&app, &state, request).await.map_err(fail)?;
+    state.set_owner(&connection_id, window.label());
+    Ok(response)
 }
 
 #[tauri::command]
@@ -223,7 +265,20 @@ pub async fn disconnect(state: State<'_, AppState>, connection_id: String) -> Re
     state.driver(engine).disconnect(&id).await.map_err(fail)?;
     state.untrack(&id);
     state.drop_tunnel(id.as_str());
+    state.clear_owner(id.as_str());
     Ok(())
+}
+
+/// Closes a session if it is open: driver, bookkeeping, and tunnel.
+pub(crate) async fn close_session(state: &AppState, connection_id: &str) {
+    let Ok(id) = gridl_core::ConnectionId::new(connection_id) else {
+        return;
+    };
+    if let Ok(engine) = state.engine(id.as_str()) {
+        let _ = state.driver(engine).disconnect(&id).await;
+    }
+    state.untrack(&id);
+    state.drop_tunnel(id.as_str());
 }
 
 #[tauri::command]
@@ -248,38 +303,103 @@ pub async fn execute_query(
     request: ExecuteQueryRequest,
     on_chunk: Channel<RowChunk>,
 ) -> Result<QueryResult, String> {
+    let mut sink = ChannelSink(on_chunk);
+    run_query(&state, request, &mut sink).await
+}
+
+pub(crate) async fn run_query(
+    state: &AppState,
+    request: ExecuteQueryRequest,
+    sink: &mut dyn ChunkSink,
+) -> Result<QueryResult, String> {
     let id = gridl_core::ConnectionId::new(request.connection_id).map_err(fail)?;
     let engine = state.engine(id.as_str()).map_err(fail)?;
-    guard(&state, id.as_str(), &[request.sql.as_str()], request.authorized)?;
+    guard(state, id.as_str(), &[request.sql.as_str()], request.authorized)?;
+    let timeout = statement_timeout(state, id.as_str());
     let cancel = Arc::new(AtomicBool::new(false));
     if !state.register_cancel(&request.query_id, Arc::clone(&cancel)).map_err(fail)? {
         return Err(format!("query '{}' is already running", request.query_id));
     }
-    let _guard = CancelGuard { state: &state, query_id: request.query_id.clone() };
+    let _guard = CancelGuard { state, query_id: request.query_id.clone() };
+    let max_rows = request.max_rows.unwrap_or(MAX_STREAM_ROWS).clamp(1, MAX_STREAM_ROWS);
     let query = QueryRequest::new(
         request.query_id,
         request.sql,
         request.params,
         request.chunk_rows.unwrap_or(DEFAULT_CHUNK_ROWS),
-        MAX_STREAM_ROWS,
-        cancel,
+        max_rows,
+        Arc::clone(&cancel),
     )
     .map_err(fail)?;
-    let mut sink = ChannelSink(on_chunk);
-    state.driver(engine).query(&id, &query, &mut sink).await.map_err(fail)
+    let timer = timeout.map(|seconds| Timer::start(seconds, Arc::clone(&cancel)));
+    let outcome = state.driver(engine).query(&id, &query, sink).await;
+    // Once the timer fires the result is partial at best, even when the
+    // engine reports the interrupted statement as finished (MySQL `SLEEP`).
+    if let Some(timer) = timer.filter(Timer::fired) {
+        return Err(timeout_message(timer.seconds));
+    }
+    outcome.map_err(fail)
 }
 
-/// The UI reports whether it holds edits that closing the app would lose.
+/// The session's statement time limit, if it has one.
+fn statement_timeout(state: &AppState, id: &str) -> Option<u32> {
+    state.safety(id).ok().and_then(|safety| safety.timeout_secs).filter(|seconds| *seconds > 0)
+}
+
+pub(crate) fn timeout_message(seconds: u32) -> String {
+    format!("La consulta superó el tiempo límite de {seconds} s y se canceló.")
+}
+
+/// Sets a query's cancel flag after the time limit. Dropping it stops the clock.
+struct Timer {
+    seconds: u32,
+    fired: Arc<AtomicBool>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl Timer {
+    fn start(seconds: u32, cancel: Arc<AtomicBool>) -> Self {
+        let fired = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&fired);
+        let task = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(u64::from(seconds))).await;
+            // A user cancel that came first keeps its own outcome.
+            if !cancel.swap(true, Ordering::SeqCst) {
+                flag.store(true, Ordering::SeqCst);
+            }
+        });
+        Self { seconds, fired, task }
+    }
+
+    fn fired(&self) -> bool {
+        self.fired.load(Ordering::SeqCst)
+    }
+}
+
+impl Drop for Timer {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+/// The UI reports whether the calling window holds edits that closing it would lose.
 #[tauri::command]
-pub fn set_unsaved(state: State<'_, AppState>, unsaved: bool) {
-    state.unsaved.store(unsaved, std::sync::atomic::Ordering::Relaxed);
+pub fn set_unsaved(window: Window, state: State<'_, AppState>, unsaved: bool) {
+    state.set_unsaved(window.label(), unsaved);
 }
 
 /// Quits after the user chose to discard pending edits.
 #[tauri::command]
 pub fn quit_discarding(app: AppHandle, state: State<'_, AppState>) {
-    state.unsaved.store(false, std::sync::atomic::Ordering::Relaxed);
+    state.clear_unsaved();
     app.exit(0);
+}
+
+/// Closes the calling window after the user chose to discard its pending edits.
+#[tauri::command]
+pub fn close_discarding(window: Window, state: State<'_, AppState>) -> Result<(), String> {
+    state.set_unsaved(window.label(), false);
+    window.destroy().map_err(|err| err.to_string())
 }
 
 #[tauri::command]
@@ -313,18 +433,45 @@ pub async fn execute_batch(
     state: State<'_, AppState>,
     request: ExecuteBatchRequest,
 ) -> Result<BatchResult, String> {
+    run_batch(&state, request).await
+}
+
+pub(crate) async fn run_batch(
+    state: &AppState,
+    request: ExecuteBatchRequest,
+) -> Result<BatchResult, String> {
     let id = gridl_core::ConnectionId::new(request.connection_id).map_err(fail)?;
     let engine = state.engine(id.as_str()).map_err(fail)?;
     let sql: Vec<&str> =
         request.statements.iter().map(|statement| statement.sql.as_str()).collect();
-    guard(&state, id.as_str(), &sql, request.authorized)?;
+    guard(state, id.as_str(), &sql, request.authorized)?;
     let batch = BatchRequest::new(request.statements).map_err(fail)?;
-    state.driver(engine).execute_batch(&id, &batch).await.map_err(fail)
+    let work = state.driver(engine).execute_batch(&id, &batch);
+    match statement_timeout(state, id.as_str()) {
+        // Dropping the unfinished batch drops its transaction, which rolls back.
+        Some(seconds) => tokio::time::timeout(Duration::from_secs(u64::from(seconds)), work)
+            .await
+            .map_err(|_| timeout_message(seconds))?
+            .map_err(fail),
+        None => work.await.map_err(fail),
+    }
 }
 
 /// Writes exported rows to a path the user picked in the save dialog.
 #[tauri::command]
 pub async fn write_export(path: String, contents: String) -> Result<(), String> {
+    let path = export_path(&path)?;
+    if contents.len() > MAX_EXPORT_BYTES {
+        return Err("el archivo supera 512 MiB".into());
+    }
+    tokio::task::spawn_blocking(move || std::fs::write(&path, contents.as_bytes()))
+        .await
+        .map_err(|err| err.to_string())?
+        .map_err(|err| err.to_string())
+}
+
+/// Checks a save-dialog path for an export: an allowed extension, not a folder.
+pub(crate) fn export_path(path: &str) -> Result<PathBuf, String> {
     let path = PathBuf::from(path);
     let extension = path
         .extension()
@@ -334,16 +481,10 @@ pub async fn write_export(path: String, contents: String) -> Result<(), String> 
     if !EXPORT_EXTENSIONS.contains(&extension.as_str()) {
         return Err(format!("extensión no permitida: .{extension}"));
     }
-    if contents.len() > MAX_EXPORT_BYTES {
-        return Err("el archivo supera 512 MiB".into());
-    }
     if path.is_dir() {
         return Err("la ruta es una carpeta".into());
     }
-    tokio::task::spawn_blocking(move || std::fs::write(&path, contents.as_bytes()))
-        .await
-        .map_err(|err| err.to_string())?
-        .map_err(|err| err.to_string())
+    Ok(path)
 }
 
 async fn open_connection(
@@ -381,7 +522,7 @@ async fn open_connection(
     if let Some(tunnel) = link.tunnel {
         state.insert_tunnel(id.as_str(), tunnel);
     }
-    state.track(&id, engine, request.config.safety.clone())?;
+    state.track(&id, request.config.clone(), link.endpoint.clone())?;
     let tables = match driver.introspect(&id).await {
         Ok(tables) => tables,
         Err(err) => {
@@ -541,10 +682,35 @@ async fn mutate_catalog(
 
 #[cfg(test)]
 mod tests {
-    use gridl_core::{ConnectionId, DatabaseEngine, Environment, GuardMode, SafetySettings};
+    use gridl_core::{
+        ConnectionConfig, ConnectionId, DatabaseEngine, Environment, GuardMode, SafetySettings,
+    };
 
-    use super::{guard, GUARD_PREFIX};
+    use super::{guard, guard_restore, GUARD_PREFIX};
     use crate::state::AppState;
+
+    pub(crate) fn sqlite_config(
+        id: &str,
+        database: &str,
+        safety: SafetySettings,
+    ) -> ConnectionConfig {
+        ConnectionConfig {
+            id: id.into(),
+            name: id.into(),
+            engine: DatabaseEngine::Sqlite,
+            database: database.into(),
+            host: None,
+            port: None,
+            username: None,
+            credential_account: None,
+            group: None,
+            read_only: false,
+            create_if_missing: true,
+            tls: gridl_core::TlsSettings::default(),
+            ssh: gridl_core::SshSettings::default(),
+            safety,
+        }
+    }
 
     fn session(state: &AppState, id: &str, writes: GuardMode, schema: GuardMode) {
         let safety = SafetySettings {
@@ -552,9 +718,10 @@ mod tests {
             writes,
             schema,
             confirm_dangerous: true,
+            timeout_secs: None,
         };
         state
-            .track(&ConnectionId::new(id).expect("id"), DatabaseEngine::Sqlite, safety)
+            .track(&ConnectionId::new(id).expect("id"), sqlite_config(id, "x.db", safety), None)
             .expect("track");
     }
 
@@ -577,5 +744,27 @@ mod tests {
         assert!(guard(&state, "prod", &["select 1", "begin"], false).is_ok());
         let batch = guard(&state, "prod", &["select 1", "drop table t"], true).expect_err("batch");
         assert!(batch.contains("\"mode\":\"block\""));
+    }
+
+    #[test]
+    fn import_and_restore_go_through_the_guard() {
+        let state = AppState::new();
+        session(&state, "stg", GuardMode::Confirm, GuardMode::Allow);
+        session(&state, "open", GuardMode::Allow, GuardMode::Allow);
+        session(&state, "ro", GuardMode::Block, GuardMode::Allow);
+
+        let import = "INSERT INTO \"t\" (\"a\") VALUES (NULL)";
+        assert!(guard(&state, "stg", &[import], false).is_err());
+        assert!(guard(&state, "stg", &[import], true).is_ok());
+        assert!(guard(&state, "open", &[import], false).is_ok());
+        assert!(guard(&state, "ro", &[import], true).is_err());
+
+        let asked = guard_restore(&state, "open", "-- restaurar x".into(), false)
+            .expect_err("restore always asks");
+        assert!(asked.contains("\"dangerous\":true"));
+        assert!(guard_restore(&state, "open", "-- restaurar x".into(), true).is_ok());
+        let blocked =
+            guard_restore(&state, "ro", "-- restaurar x".into(), true).expect_err("block");
+        assert!(blocked.contains("\"mode\":\"block\""));
     }
 }

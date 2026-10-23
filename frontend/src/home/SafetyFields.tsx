@@ -16,7 +16,8 @@ function modeLabel(mode: GuardMode): string {
 /** Environment picker with the safety rules folded underneath. */
 export function SafetyFields({ safety, onChange }: { safety: SafetySettings; onChange: (safety: SafetySettings) => void }) {
   const [open, setOpen] = useState(false);
-  const line = `Datos: ${modeLabel(safety.writes)} · Estructura: ${modeLabel(safety.schema)}${safety.confirmDangerous ? " · Destructivas: confirmar" : ""}`;
+  const limit = safety.timeoutSecs ? ` · Límite: ${safety.timeoutSecs} s` : "";
+  const line = `Datos: ${modeLabel(safety.writes)} · Estructura: ${modeLabel(safety.schema)}${safety.confirmDangerous ? " · Destructivas: confirmar" : ""}${limit}`;
   return (
     <div className={`safety-block env-${safety.environment}`}>
       <div className="safety-row">
@@ -49,6 +50,22 @@ export function SafetyFields({ safety, onChange }: { safety: SafetySettings; onC
               {modes.map((mode) => <option key={mode.id} value={mode.id}>{mode.label}</option>)}
             </select>
           </label>
+          <label title="La consulta se cancela en el servidor al pasar este tiempo. Vacío: sin límite">
+            Tiempo límite por consulta
+            <span className="input-suffix">
+              <input
+                value={safety.timeoutSecs ?? ""}
+                inputMode="numeric"
+                placeholder="Sin límite"
+                onChange={(event) => {
+                  const digits = event.target.value.replace(/\D/g, "");
+                  onChange({ ...safety, timeoutSecs: digits ? Math.min(86_400, Number(digits)) : null });
+                }}
+              />
+              <span>s</span>
+            </span>
+          </label>
+          <span />
           <label className="check-row span-2" title="El límite por si te equivocas, también en local">
             <input type="checkbox" checked={safety.confirmDangerous} onChange={(event) => onChange({ ...safety, confirmDangerous: event.target.checked })} />
             Confirmar siempre DELETE o UPDATE sin WHERE, DROP y TRUNCATE

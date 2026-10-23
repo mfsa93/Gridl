@@ -1,4 +1,6 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
+import { listen, type EventCallback, type UnlistenFn } from "@tauri-apps/api/event";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 
 export type DatabaseEngine = "sqlite" | "postgres" | "mysql";
 export type TlsMode = "prefer" | "disable" | "require" | "verify-ca" | "verify-full";
@@ -58,15 +60,17 @@ export type SafetySettings = {
   writes: GuardMode;
   schema: GuardMode;
   confirmDangerous: boolean;
+  /** Seconds before a statement is cancelled; null means no limit. */
+  timeoutSecs?: number | null;
 };
 
-export const defaultSafety: SafetySettings = { environment: "local", writes: "allow", schema: "allow", confirmDangerous: true };
+export const defaultSafety: SafetySettings = { environment: "local", writes: "allow", schema: "allow", confirmDangerous: true, timeoutSecs: null };
 
 /** Policy suggested when the user picks an environment; every field stays editable. */
 export function suggestedSafety(environment: Environment): SafetySettings {
-  if (environment === "production") return { environment, writes: "block", schema: "block", confirmDangerous: true };
-  if (environment === "staging") return { environment, writes: "confirm", schema: "confirm", confirmDangerous: true };
-  return { environment, writes: "allow", schema: "allow", confirmDangerous: true };
+  if (environment === "production") return { environment, writes: "block", schema: "block", confirmDangerous: true, timeoutSecs: 30 };
+  if (environment === "staging") return { environment, writes: "confirm", schema: "confirm", confirmDangerous: true, timeoutSecs: 60 };
+  return { environment, writes: "allow", schema: "allow", confirmDangerous: true, timeoutSecs: null };
 }
 
 /** What the backend sends when its safety policy stops a statement. */
@@ -270,6 +274,8 @@ export async function executeQuery(
     params: SqlValue[];
     chunkRows: number;
     authorized?: boolean;
+    /** Stop after this many rows; the result comes back `truncated`. */
+    maxRows?: number;
   },
   onChunk: (chunk: RowChunk) => void,
 ): Promise<QueryResult> {
@@ -314,4 +320,65 @@ export function setUnsaved(unsaved: boolean): Promise<void> {
 
 export function quitDiscarding(): Promise<void> {
   return invoke("quit_discarding");
+}
+
+/** Listens to events sent to this window (or to every window), not those meant for other windows. */
+export function listenHere<T>(event: string, handler: EventCallback<T>): Promise<UnlistenFn> {
+  try {
+    return getCurrentWebviewWindow().listen<T>(event, handler);
+  } catch {
+    return listen<T>(event, handler);
+  }
+}
+
+/** Opens the connection in its own window, or focuses the window that already has it. */
+export function openConnectionWindow(connectionId: string): Promise<string> {
+  return invoke("open_connection_window", { connectionId });
+}
+
+export function closeDiscarding(): Promise<void> {
+  return invoke("close_discarding");
+}
+
+export type ExportResult = { rows: number; bytes: number; durationMs: number };
+
+/** Streams a query straight to a file in Rust, without holding the rows in the UI. */
+export function exportQuery(request: {
+  connectionId: string;
+  queryId: string;
+  sql: string;
+  format: "csv" | "json" | "sql";
+  path: string;
+  table: string;
+  authorized?: boolean;
+}): Promise<ExportResult> {
+  return invoke<ExportResult>("export_query", { request }).catch(rethrowGuard);
+}
+
+export type CsvPreview = { delimiter: string; headers: string[]; rows: string[][]; totalRows: number | null };
+
+export function previewCsv(path: string, delimiter: string | null): Promise<CsvPreview> {
+  return invoke("preview_csv", { path, delimiter });
+}
+
+export function importCsv(request: {
+  connectionId: string;
+  path: string;
+  delimiter: string;
+  hasHeader: boolean;
+  table: string;
+  columns: string[];
+  mapping: (number | null)[];
+  nullToken: string | null;
+  authorized?: boolean;
+}): Promise<{ rows: number; durationMs: number }> {
+  return invoke<{ rows: number; durationMs: number }>("import_csv", { request }).catch(rethrowGuard);
+}
+
+export function backupDatabase(request: { connectionId: string; path: string; password: string | null }): Promise<{ path: string; bytes: number; durationMs: number }> {
+  return invoke("backup_database", { request });
+}
+
+export function restoreDatabase(request: { connectionId: string; path: string; password: string | null; authorized?: boolean }): Promise<{ durationMs: number }> {
+  return invoke<{ durationMs: number }>("restore_database", { request }).catch(rethrowGuard);
 }

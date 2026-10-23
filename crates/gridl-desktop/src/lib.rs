@@ -1,10 +1,15 @@
+mod backup;
 mod commands;
+#[cfg(test)]
+mod integration_tests;
 mod menu;
 mod state;
+mod transfer;
 mod tunnel;
 mod vault;
+mod windows;
 
-use tauri::{Emitter, Manager};
+use tauri::Manager;
 
 /// Starts the desktop shell. The database engine lives in `gridl-core`.
 pub fn run() {
@@ -13,7 +18,10 @@ pub fn run() {
         .on_menu_event(|app, event| {
             let command = event.id().0.clone();
             if matches!(command.as_str(), "new-connection" | "new-group" | "close-tab" | "reload") {
-                let _ = app.emit("gridl-command", command);
+                // Only the window the user is looking at acts on the menu.
+                if let Some(label) = windows::focused_label(app) {
+                    windows::emit_to_window(app, &label, "gridl-command", command);
+                }
             }
         })
         .setup(|app| {
@@ -21,15 +29,7 @@ pub fn run() {
             menu::install(app.handle())?;
             Ok(())
         })
-        .on_window_event(|window, event| {
-            // The red close button: hold it while the UI has unsaved edits.
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                if has_unsaved(window.app_handle()) {
-                    api.prevent_close();
-                    let _ = window.app_handle().emit("gridl-quit-requested", ());
-                }
-            }
-        })
+        .on_window_event(windows::on_window_event)
         .invoke_handler(tauri::generate_handler![
             commands::connect,
             commands::test_connection,
@@ -48,21 +48,20 @@ pub fn run() {
             commands::write_export,
             commands::set_unsaved,
             commands::quit_discarding,
+            commands::close_discarding,
+            windows::open_connection_window,
+            transfer::export_query,
+            transfer::preview_csv,
+            transfer::import_csv,
+            backup::backup_database,
+            backup::restore_database,
         ])
         .build(tauri::generate_context!())
         .expect("gridl failed to start")
         .run(|app, event| {
             // Cmd+Q and Quit from the menu: same check. `exit(0)` from the UI carries a code and passes.
             if let tauri::RunEvent::ExitRequested { code: None, api, .. } = event {
-                if has_unsaved(app) {
-                    api.prevent_exit();
-                    let _ = app.emit("gridl-quit-requested", ());
-                }
+                windows::on_exit_requested(app, &api);
             }
         });
-}
-
-fn has_unsaved(app: &tauri::AppHandle) -> bool {
-    app.try_state::<state::AppState>()
-        .is_some_and(|state| state.unsaved.load(std::sync::atomic::Ordering::Relaxed))
 }

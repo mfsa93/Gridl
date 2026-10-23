@@ -349,7 +349,18 @@ export function RowDetails({
 }
 
 /** Readable error with the database message, a hint when one applies, and a copy button. */
-export function ErrorPanel({ error, compact = false, onClose }: { error: ShownError; compact?: boolean; onClose?: () => void }) {
+export function ErrorPanel({
+  error,
+  compact = false,
+  onClose,
+  action,
+}: {
+  error: ShownError;
+  compact?: boolean;
+  onClose?: () => void;
+  /** A button that can fix the error, such as reconnecting. */
+  action?: { label: string; run: () => void; busy?: boolean } | null;
+}) {
   return (
     <div className={compact ? "error-panel compact" : "error-panel"} role="alert">
       <CircleAlert size={compact ? 15 : 18} className="error-icon" />
@@ -359,6 +370,9 @@ export function ErrorPanel({ error, compact = false, onClose }: { error: ShownEr
         {error.hint ? <p className="error-hint">{error.hint}</p> : null}
       </div>
       <div className="error-actions">
+        {action ? (
+          <button type="button" className="toolbar-button error-action" disabled={action.busy} onClick={action.run}>{action.busy ? "Reconectando…" : action.label}</button>
+        ) : null}
         <button type="button" className="tiny-icon" aria-label="Copiar error" title="Copiar error" onClick={() => void navigator.clipboard?.writeText(error.message)}>
           <Copy size={13} />
         </button>

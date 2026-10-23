@@ -1,213 +1,42 @@
-import { listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import { ArrowLeft, Braces, ChevronDown, ChevronLeft, ChevronRight, Database, Eye, FastForward, Folder, Hash, ListTree, PanelLeft, Pencil, Play, Plus, Search, Table2, TerminalSquare, Trash2, X, Zap } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { ArchiveRestore, ArrowLeft, Braces, Database, Eye, FastForward, Folder, PanelLeft, Pencil, Play, Plus, Search, TerminalSquare, Trash2, Upload, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { splitStatements } from "./editor/activeSql";
 import { SqlEditor, type SqlEditorHandle } from "./editor/SqlEditor";
 import { ResultGrid, type GridRangeActions } from "./grid/ResultGrid";
 import { ConnectionHome, type HomeCommand } from "./home/ConnectionHome";
 import { toConfig, type Draft } from "./home/draft";
-import {
-  cancelQuery,
-  connect,
-  createGroup,
-  deleteGroup,
-  deleteProfile,
-  disconnect,
-  errorMessage,
-  checkSql,
-  defaultSafety,
-  executeBatch,
-  GuardError,
-  executeQuery,
-  formatSqlValue,
-  introspect,
-  listForeignKeys,
-  listProfiles,
-  quitDiscarding,
-  setUnsaved,
-  qualifiedName,
-  quoteIdent,
-  saveConnection,
-  setDialect,
-  testConnection,
-  writeExport,
-  type BatchStatement,
-  type BrowseKind,
-  type ColumnDefinition,
-  type ConnectionCatalog,
-  type ConnectionConfig,
-  type DatabaseEngine,
-  type ForeignKey,
-  type GuardInfo,
-  type SqlValue,
-  type TableSchema,
-  type TestResult,
-} from "./lib/api";
-import {
-  canEditRows,
-  createSchemaSql,
-  createTableSql,
-  deleteSql,
-  dropSchemaSql,
-  insertSql,
-  isGeneratedColumn,
-  canonicalTemporal,
-  isTemporalColumn,
-  listSchemasSql,
-  primaryKeys,
-  renameSchemaSql,
-  rowRecord,
-  schemaNameFrom,
-  updateSql,
-  type CellField,
-  type ColumnDraft,
-} from "./workspace/changes";
-import { describeError, type ShownError } from "./lib/errors";
+import { cancelQuery, connect, createGroup, deleteGroup, deleteProfile, disconnect, errorMessage, checkSql, defaultSafety, executeBatch, GuardError, executeQuery, exportQuery, importCsv, backupDatabase, restoreDatabase, formatSqlValue, introspect, listForeignKeys, listProfiles, closeDiscarding, listenHere, openConnectionWindow, quitDiscarding, setUnsaved, qualifiedName, quoteIdent, saveConnection, setDialect, testConnection, writeExport, type BatchStatement, type BrowseKind, type ColumnDefinition, type ConnectionCatalog, type ConnectionConfig, type DatabaseEngine, type ForeignKey, type GuardInfo, type SqlValue, type TableSchema, type TestResult } from "./lib/api";
+import { canEditRows, createSchemaSql, createTableSql, deleteSql, dropSchemaSql, insertSql, listSchemasSql, primaryKeys, renameSchemaSql, rowRecord, schemaNameFrom, updateSql, type ColumnDraft } from "./workspace/changes";
+import { describeError, isConnectionLost, type ShownError } from "./lib/errors";
 import { ConfirmDialog, NameDialog, TableDialog } from "./workspace/dialogs";
 import { exportRows, sqlLiteral, toTsv, type ExportFormat } from "./workspace/export";
-import { nextSort, orderClause, whereClause, type TableFilter, type TableSort } from "./workspace/filters";
+import { nextSort, orderClause, whereClause, type TableFilter } from "./workspace/filters";
 import { clearHistory, forgetHistory, pushHistory, readHistory, removeHistory, toggleStar, type HistoryEntry } from "./workspace/history";
 import { environmentLabel } from "./lib/environments";
 import { ContextMenu, ErrorPanel, GuardDialog, UnsavedDialog, ExportMenu, type MenuItem, FilterBar, FilterToggle, HistoryMenu, PreviewDialog, ResultMessage, RowDetails } from "./workspace/panels";
+import { ImportDialog, type ImportPlan } from "./workspace/ImportDialog";
 import { RelationsPanel } from "./workspace/RelationsPanel";
 import { findTable, keyForColumn, outgoingKeys, incomingKeys, refLabel, resolvedRefColumns } from "./workspace/relations";
 import { StructureEditor } from "./workspace/StructureEditor";
+import { kindLabel, pageSizes, sqlTabId, countValue, clonePending, pendingEmpty, viewKey, viewLabel, primaryKeyList, emptyView, tableTabId, showsRows, objectGroups, schemaMap, describePending, describeTabChanges, pastedRow, isHeaderRow, mergeColumns, structureKey, sameDisplayedRow, fieldsFromValues, fieldsFromDraft, namesFromTables, type TableQuery, type TablePage, type TabView, type TableTab, type PendingChanges, type PageStash, type UndoEntry, type WorkspaceDialog } from "./workspace/model";
+import { sessionKey, workspaceTabs, readSession, writeSession, matchTabs, readPaneWidth, readResultsHeight, clampResults, clampPane, paneLimit } from "./workspace/session";
+import { PaneSplitter, TablePager, TreeBranch, ObjectIcon, TableLeaf } from "./workspace/chrome";
 
 const emptyCatalog: ConnectionCatalog = { groups: [], profiles: [] };
-const sqlTabId = "sql";
-const pageSizes = [50, 100, 250, 500];
+/** Stable empties so the grid does not repaint because of a fresh `[]`. */
+const NO_ROWS: SqlValue[][] = [];
+const NO_INDEXES: number[] = [];
+/** Rows the editor keeps by default; "Cargar más" raises it step by step. */
+const editorRowSteps = [10_000, 100_000, 1_000_000];
+/** Statements safe to run again to fetch more rows. */
+const rerunnable = /^\s*(select|with|show|explain|values|table|describe|desc|pragma)\b/i;
+const modifies = /\b(insert|update|delete|merge|into)\b/i;
 const runShortcut = /Mac|iPhone|iPad/.test(navigator.userAgent) ? "⌘↵" : "Ctrl+↵";
 const saveShortcut = /Mac|iPhone|iPad/.test(navigator.userAgent) ? "⌘S" : "Ctrl+S";
 const formatShortcut = /Mac|iPhone|iPad/.test(navigator.userAgent) ? "⌘I" : "Ctrl+I";
 const runAllShortcut = /Mac|iPhone|iPad/.test(navigator.userAgent) ? "⇧⌘↵" : "Ctrl+Shift+↵";
 const schemaChange = /^\s*(create|alter|drop|rename|comment|truncate)\b/i;
-
-type TableQuery = {
-  filters: TableFilter[];
-  sort: TableSort | null;
-};
-
-type TablePage = {
-  page: number;
-  pageSize: number;
-  total: number;
-};
-
-function countValue(value: SqlValue | undefined): number {
-  if (!value || value.t === "null") return 0;
-  if (value.t === "int" || value.t === "text") {
-    const parsed = Number(value.v);
-    return Number.isFinite(parsed) ? parsed : 0;
-  }
-  if (value.t === "float") return Number.isFinite(value.v) ? value.v : 0;
-  return 0;
-}
-
-type TabView = {
-  columns: ColumnDefinition[];
-  rowCount: number;
-  status: string;
-  error?: ShownError | null;
-  /** Set while a query runs, so the results pane keeps its place. */
-  pending?: boolean;
-  /** True once the editor ran something; the results pane then stays open. */
-  ran?: boolean;
-};
-
-type TableTab = {
-  id: string;
-  table: TableSchema;
-  pinned: boolean;
-};
-
-type PendingChanges = {
-  inserts: SqlValue[][];
-  removed: number[];
-  edits: Record<number, SqlValue[]>;
-};
-
-/** Pending edits of a page the user left; kept with the rows they apply to. */
-type PageStash = {
-  key: string;
-  label: string;
-  edit: PendingChanges;
-  rows: SqlValue[][];
-  columns: ColumnDefinition[];
-};
-
-type UndoEntry = {
-  id: string;
-  before: PendingChanges | null;
-};
-
-function clonePending(edit: PendingChanges): PendingChanges {
-  return structuredClone(edit);
-}
-
-function pendingEmpty(edit: PendingChanges): boolean {
-  return edit.inserts.length === 0 && edit.removed.length === 0 && Object.keys(edit.edits ?? {}).length === 0;
-}
-
-type WorkspaceDialog =
-  | { kind: "create-schema" }
-  | { kind: "rename-schema"; name: string }
-  | { kind: "drop-schema"; name: string }
-  | { kind: "create-table" }
-  | null;
-
-/** Identifies what a table tab shows, so stashed edits come back on the same page. */
-function viewKey(page: number, pageSize: number, query: TableQuery | undefined): string {
-  const filters = (query?.filters ?? []).filter((filter) => filter.enabled).map((filter) => [filter.column, filter.op, filter.value]);
-  return JSON.stringify({ page, pageSize, filters, sort: query?.sort ?? null });
-}
-
-function viewLabel(page: number, query: TableQuery | undefined): string {
-  const filtered = (query?.filters ?? []).some((filter) => filter.enabled);
-  return `página ${page + 1}${filtered ? " filtrada" : ""}`;
-}
-
-function primaryKeyList(table: TableSchema, columns: ColumnDefinition[], rows: SqlValue[][]): string {
-  const indexes = columns.map((column, index) => (table.columns.find((item) => item.name === column.name)?.primaryKey ? index : -1)).filter((index) => index >= 0);
-  return JSON.stringify(rows.map((row) => indexes.map((index) => row[index] ?? null)));
-}
-
-function emptyView(status = ""): TabView {
-  return { columns: [], rowCount: 0, status };
-}
-
-function tableTabId(table: TableSchema) {
-  const base = table.schema ? `${table.schema}.${table.name}` : table.name;
-  if (table.kind === "function" || table.kind === "procedure") {
-    const signature = table.columns.map((column) => column.dataType).join(",");
-    return `${table.kind}:${base}(${signature})`;
-  }
-  if (table.kind === "table") return base;
-  return `${table.kind}:${base}`;
-}
-
-function showsRows(table: TableSchema) {
-  return table.kind === "table" || table.kind === "view" || table.kind === "materialized";
-}
-
-const objectGroups: { kind: TableSchema["kind"]; label: string }[] = [
-  { kind: "view", label: "Vistas" },
-  { kind: "materialized", label: "Vistas materializadas" },
-  { kind: "function", label: "Funciones" },
-  { kind: "procedure", label: "Procedimientos" },
-  { kind: "sequence", label: "Secuencias" },
-  { kind: "trigger", label: "Triggers" },
-  { kind: "index", label: "Índices" },
-];
-
-function schemaMap(tables: TableSchema[]): Record<string, string[]> {
-  const schema: Record<string, string[]> = {};
-  for (const table of tables) {
-    const key = table.schema ? `${table.schema}.${table.name}` : table.name;
-    schema[key] = table.columns.map((column) => column.name);
-  }
-  return schema;
-}
 
 export function App() {
   const [screen, setScreen] = useState<"home" | "workspace">("home");
@@ -277,6 +106,11 @@ export function App() {
       return run(true);
     }
   }, [askGuard]);
+  const [reconnecting, setReconnecting] = useState(false);
+  const [importing, setImporting] = useState<{ tab: string; table: TableSchema; path: string; busy: boolean; progress: number | null; error: string | null } | null>(null);
+  const [backupMenu, setBackupMenu] = useState(false);
+  const [backupNote, setBackupNote] = useState<string | null>(null);
+  const reconnectRef = useRef<() => Promise<boolean>>(async () => false);
   const [cellMenu, setCellMenu] = useState<{ tab: string; row: number; column: number; x: number; y: number; range: GridRangeActions | null } | null>(null);
   const [objectQuery, setObjectQuery] = useState("");
   const [selectedTable, setSelectedTable] = useState<TableSchema | null>(null);
@@ -379,7 +213,7 @@ export function App() {
 
   useEffect(() => {
     let stop = () => {};
-    void listen<string>("gridl-command", (event) => {
+    void listenHere<string>("gridl-command", (event) => {
       const kind = event.payload;
       if (kind === "close-tab") {
         closeTabRef.current();
@@ -434,7 +268,12 @@ export function App() {
     let cancelled = false;
     void listProfiles()
       .then((next) => {
-        if (!cancelled) setCatalog(next);
+        if (cancelled) return;
+        setCatalog(next);
+        // A window opened for one connection carries it in the URL: #connect=<id>.
+        const wanted = new URLSearchParams(window.location.hash.slice(1)).get("connect");
+        const profile = wanted ? next.profiles.find((item) => item.id === wanted) : undefined;
+        if (profile) void openSavedRef.current(profile);
       })
       .catch((caught: unknown) => {
         if (!cancelled) setError(errorMessage(caught));
@@ -488,6 +327,7 @@ export function App() {
     setScreen("workspace");
   };
 
+  const openSavedRef = useRef<(profile: ConnectionConfig) => Promise<boolean>>(async () => false);
   const openSaved = async (profile: ConnectionConfig) => {
     setBusy(true);
     setError(null);
@@ -504,12 +344,16 @@ export function App() {
       enter(response.config, response.tables);
       return true;
     } catch (caught) {
-      setError(errorMessage(caught));
+      const message = errorMessage(caught);
+      // Already open in another window: the shell focused it, nothing to show here.
+      if (message.startsWith("gridl-focused:")) return false;
+      setError(message);
       return false;
     } finally {
       setBusy(false);
     }
   };
+  openSavedRef.current = openSaved;
 
   const saveDraft = async (draft: Draft, openAfter: boolean) => {
     setBusy(true);
@@ -589,6 +433,33 @@ export function App() {
       setBusy(false);
     }
   };
+
+  /** Opens the session again with the saved profile; the keychain supplies saved passwords. */
+  reconnectRef.current = async () => {
+    if (!active || reconnecting) return false;
+    setReconnecting(true);
+    try {
+      const response = await connect({ config: active, password: null, rememberPassword: false, sshSecret: null, rememberSshSecret: false, trustSshHost: false });
+      setActive(response.config);
+      setTables(response.tables);
+      setViews((current) => {
+        const next = { ...current };
+        for (const [id, view] of Object.entries(next)) {
+          if (view.error && isConnectionLost(view.error.message)) next[id] = { ...view, error: null, status: "Reconectado" };
+        }
+        return next;
+      });
+      setFormError(null);
+      return true;
+    } catch (caught) {
+      setFormError(`No se pudo reconectar: ${errorMessage(caught)}. Si la contraseña no está guardada, vuelve a Conexiones y ábrela de nuevo.`);
+      return false;
+    } finally {
+      setReconnecting(false);
+    }
+  };
+  const reconnectAction = (error: ShownError | null | undefined) =>
+    error && isConnectionLost(error.message) ? { label: "Reconectar", busy: reconnecting, run: () => void reconnectRef.current() } : null;
 
   const goHome = async () => {
     if (!(await confirmDiscardRef.current({ action: "Volver a Conexiones" }))) return;
@@ -678,7 +549,7 @@ export function App() {
     }
   }, [active, guarded]);
 
-  const runQuery = useCallback(async (tabId = sqlTabId, sql?: string | string[]) => {
+  const runQuery = useCallback(async (tabId = sqlTabId, sql?: string | string[], maxRows = editorRowSteps[0]) => {
     if (!active || running) return;
     const requested = Array.isArray(sql) ? sql : [sql ?? editorRef.current?.getActiveSql() ?? ""];
     const statements = requested.map((item) => item.trim()).filter(Boolean);
@@ -713,7 +584,7 @@ export function App() {
         const prefix = total > 1 ? `${index + 1}/${total} · ` : "";
         setViews((current) => ({ ...current, [tabId]: { columns: [], rowCount: 0, status: `${prefix}Ejecutando…`, error: null, pending: true, ran: true } }));
         const execute = (authorized: boolean) => executeQuery(
-          { connectionId, queryId: thisQuery, sql: statement, params: [], chunkRows: 500, authorized },
+          { connectionId, queryId: thisQuery, sql: statement, params: [], chunkRows: 500, authorized, maxRows },
           (chunk) => {
               if (chunk.queryId !== thisQuery) return;
               if (chunk.rows.length > 0) rows.push(...chunk.rows);
@@ -750,7 +621,7 @@ export function App() {
       const finalResult = result;
       const notes = [
         finalResult.cancelled ? "cancelada" : null,
-        finalResult.truncated ? "truncada a 1.000.000 filas" : null,
+        finalResult.truncated ? `se muestran las primeras ${maxRows.toLocaleString("es")} filas` : null,
       ].filter((note) => note !== null);
       const returnsRows = finalResult.columns.length > 0 || finalResult.rowCount > 0;
       const headline = total > 1
@@ -758,6 +629,11 @@ export function App() {
         : returnsRows ? `${finalResult.rowCount} filas` : `${finalResult.rowsAffected} filas afectadas`;
       const duration = total > 1 ? Math.round(performance.now() - started) : finalResult.durationMs;
       const status = `${headline} · ${duration} ms${notes.length ? ` · ${notes.join(" · ")}` : ""}`;
+      const lastStatement = statements[total - 1] ?? "";
+      const nextLimit = editorRowSteps.find((step) => step > maxRows);
+      const more = finalResult.truncated && nextLimit && rerunnable.test(lastStatement) && !modifies.test(lastStatement)
+        ? { sql: lastStatement, limit: nextLimit }
+        : null;
       setViews((current) => ({
         ...current,
         [tabId]: {
@@ -767,6 +643,7 @@ export function App() {
           error: null,
           pending: false,
           ran: true,
+          more,
         },
       }));
     } catch (caught) {
@@ -839,7 +716,7 @@ export function App() {
     return queued;
   }, [active]);
 
-  const loadTable = useCallback(async (table: TableSchema, page: number, pageSize: number, keepPending = false, discard = false) => {
+  const loadTable = useCallback(async (table: TableSchema, page: number, pageSize: number, keepPending = false, discard = false, retried = false): Promise<void> => {
     if (!active || writeLock.current) return;
     const id = tableTabId(table);
     const size = pageSizes.includes(pageSize) ? pageSize : 100;
@@ -918,6 +795,17 @@ export function App() {
         setPending(next);
       }
     } catch (caught) {
+      // A page load is a read: after a dropped connection, reconnect and try once more.
+      if (!retried && isConnectionLost(errorMessage(caught))) {
+        if (runningTab.current === id) {
+          setRunning(false);
+          runningTab.current = null;
+        }
+        if (await reconnectRef.current()) {
+          await loadTable(table, page, pageSize, true, false, true);
+          return;
+        }
+      }
       if (runningTab.current === id) {
         const shown = describeError(errorMessage(caught), null, active.engine);
         setViews((current) => ({
@@ -1485,6 +1373,73 @@ export function App() {
     setViews((current) => ({ ...current, [tabId]: { ...(current[tabId] ?? emptyView()), status } }));
   };
 
+  const startImport = async (tabId: string, table: TableSchema) => {
+    const picked = await open({ multiple: false, directory: false, filters: [{ name: "CSV", extensions: ["csv", "tsv", "txt"] }] });
+    if (typeof picked === "string") setImporting({ tab: tabId, table, path: picked, busy: false, progress: null, error: null });
+  };
+
+  const runImport = async (plan: ImportPlan) => {
+    if (!active || !importing) return;
+    const job = importing;
+    setImporting({ ...job, busy: true, progress: 0, error: null });
+    const stop = await listenHere<{ rows: number }>("gridl-import-progress", (event) => {
+      setImporting((current) => (current ? { ...current, progress: event.payload.rows } : current));
+    }).catch(() => () => undefined);
+    try {
+      const done = await guarded((authorized) => importCsv({
+        connectionId: active.id,
+        path: job.path,
+        delimiter: plan.delimiter,
+        hasHeader: plan.hasHeader,
+        table: qualifiedName(job.table),
+        columns: plan.columns,
+        mapping: plan.mapping,
+        nullToken: plan.nullToken,
+        authorized,
+      }));
+      setImporting(null);
+      await reloadOpenTable(job.table);
+      setStatus(job.tab, `${done.rows.toLocaleString("es")} filas importadas · ${done.durationMs} ms`);
+    } catch (caught) {
+      setImporting((current) => (current ? { ...current, busy: false, progress: null, error: errorMessage(caught) } : current));
+    } finally {
+      stop();
+    }
+  };
+
+  const runBackup = async () => {
+    if (!active) return;
+    setBackupMenu(false);
+    const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-");
+    const base = (active.engine === "sqlite" ? active.database.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, "") : active.database) || "respaldo";
+    const extension = active.engine === "sqlite" ? "sqlite" : "sql";
+    const path = await save({ defaultPath: `${base}-${stamp}.${extension}`, filters: [{ name: "Respaldo", extensions: [extension] }] });
+    if (!path) return;
+    setBackupNote("Creando respaldo…");
+    try {
+      const done = await backupDatabase({ connectionId: active.id, path, password: null });
+      const size = done.bytes > 1_048_576 ? `${(done.bytes / 1_048_576).toFixed(1)} MB` : `${Math.max(1, Math.round(done.bytes / 1024))} KB`;
+      setBackupNote(`Respaldo listo: ${done.path} (${size}, ${(done.durationMs / 1000).toFixed(1)} s)`);
+    } catch (caught) {
+      setBackupNote(`No se pudo crear el respaldo: ${errorMessage(caught)}`);
+    }
+  };
+
+  const runRestore = async () => {
+    if (!active) return;
+    setBackupMenu(false);
+    const picked = await open({ multiple: false, directory: false, filters: [{ name: "SQL", extensions: ["sql", "dump"] }] });
+    if (typeof picked !== "string") return;
+    setBackupNote("Restaurando…");
+    try {
+      const done = await guarded((authorized) => restoreDatabase({ connectionId: active.id, path: picked, password: null, authorized }));
+      setBackupNote(`Restauración terminada en ${(done.durationMs / 1000).toFixed(1)} s`);
+      await refreshSchema();
+    } catch (caught) {
+      setBackupNote(`No se pudo restaurar: ${errorMessage(caught)}`);
+    }
+  };
+
   const exportResult = async (tabId: string, format: ExportFormat) => {
     if (!active) return;
     const table = tabId === sqlTabId ? null : (tableTabs.find((tab) => tab.id === tabId)?.table ?? null);
@@ -1494,23 +1449,34 @@ export function App() {
         filters: [{ name: format.toUpperCase(), extensions: [format] }],
       });
       if (!path) return;
-      let columns: ColumnDefinition[];
-      let rows: SqlValue[][];
       if (table) {
+        // The whole table goes from the database to the file in Rust; the UI never holds the rows.
         setStatus(tabId, "Exportando…");
         const query = tableQueryRef.current[tabId];
-        const loaded = await collectQuery(
-          `select * from ${qualifiedName(table)}${whereClause(query?.filters ?? [], engine)}${orderClause(table, query?.sort ?? null)}`,
-          2000,
-        );
-        columns = loaded.columns;
-        rows = loaded.rows;
-      } else {
-        columns = views[sqlTabId]?.columns ?? [];
-        rows = rowsByTab.current[sqlTabId] ?? [];
+        const queryId = crypto.randomUUID();
+        const stop = await listenHere<{ queryId: string; rows: number }>("gridl-export-progress", (event) => {
+          if (event.payload.queryId === queryId) setStatus(tabId, `Exportando… ${event.payload.rows.toLocaleString("es")} filas`);
+        }).catch(() => () => undefined);
+        try {
+          const done = await guarded((authorized) => exportQuery({
+            connectionId: active.id,
+            queryId,
+            sql: `select * from ${qualifiedName(table)}${whereClause(query?.filters ?? [], engine)}${orderClause(table, query?.sort ?? null)}`,
+            format,
+            path,
+            table: qualifiedName(table),
+            authorized,
+          }));
+          const size = done.bytes > 1_048_576 ? `${(done.bytes / 1_048_576).toFixed(1)} MB` : `${Math.max(1, Math.round(done.bytes / 1024))} KB`;
+          setStatus(tabId, `${done.rows.toLocaleString("es")} filas exportadas (${size}) a ${path}`);
+        } finally {
+          stop();
+        }
+        return;
       }
-      const target = table ? qualifiedName(table) : quoteIdent("resultado");
-      await writeExport(path, exportRows(format, columns, rows, engine, target));
+      const columns = views[sqlTabId]?.columns ?? [];
+      const rows = rowsByTab.current[sqlTabId] ?? [];
+      await writeExport(path, exportRows(format, columns, rows, engine, quoteIdent("resultado")));
       setStatus(tabId, `${rows.length.toLocaleString("es")} filas exportadas a ${path}`);
     } catch (caught) {
       setStatus(tabId, `No se pudo exportar: ${errorMessage(caught)}`);
@@ -1640,9 +1606,11 @@ export function App() {
   useEffect(() => {
     let stop = () => {};
     // The shell holds the window close and Cmd+Q while edits are pending.
-    void listen("gridl-quit-requested", () => {
-      void confirmDiscardRef.current({ action: "Salir de Gridl" }).then((ok) => {
-        if (ok) void quitDiscarding();
+    void listenHere<"window" | "app">("gridl-close-requested", (event) => {
+      const quitting = event.payload === "app";
+      void confirmDiscardRef.current({ action: quitting ? "Salir de Gridl" : "Cerrar la ventana" }).then((ok) => {
+        if (!ok) return;
+        void (quitting ? quitDiscarding() : closeDiscarding());
       });
     })
       .then((unlisten) => {
@@ -1662,6 +1630,9 @@ export function App() {
         onDeleteGroup={removeGroup}
         onDeleteConnection={removeConnection}
         onOpen={openSaved}
+        onOpenWindow={(profile) => {
+          void openConnectionWindow(profile.id).catch((caught: unknown) => setError(errorMessage(caught)));
+        }}
         onSave={saveDraft}
         onBrowse={browse}
         onTest={testDraft}
@@ -1776,6 +1747,22 @@ export function App() {
           <span className={`env-pill env-${safety.environment}`} title="Ambiente de esta conexión">{environmentLabel(safety.environment)}</span>
         ) : null}
         {active?.readOnly ? <span className="readonly-badge">Solo lectura</span> : null}
+        <div className="topbar-actions">
+          {backupNote ? (
+            <span className="backup-note" title={backupNote} onClick={() => setBackupNote(null)}>{backupNote}</span>
+          ) : null}
+          <div className="popover-anchor">
+            <button type="button" className="toolbar-button" onClick={() => setBackupMenu((current) => !current)}>
+              <ArchiveRestore size={14} /> Respaldo
+            </button>
+            {backupMenu ? (
+              <div className="popover-menu" onMouseLeave={() => setBackupMenu(false)}>
+                <button type="button" onClick={() => void runBackup()}>Crear respaldo…</button>
+                <button type="button" disabled={active?.engine === "sqlite" || structureLocked} onClick={() => void runRestore()}>Restaurar desde archivo…</button>
+              </div>
+            ) : null}
+          </div>
+        </div>
       </header>
       <div
         className="workspace-body"
@@ -1956,7 +1943,7 @@ export function App() {
                 />
                 <div className="query-results" style={{ height: resultsHeight }}>
                   {sqlView.error ? (
-                    <ErrorPanel error={sqlView.error} />
+                    <ErrorPanel error={sqlView.error} action={reconnectAction(sqlView.error)} />
                   ) : sqlView.columns.length > 0 ? (
                     <ResultGrid
                       columns={sqlView.columns}
@@ -1973,6 +1960,19 @@ export function App() {
             ) : null}
             <div className={sqlView.error ? "editor-status failed" : "editor-status"}>
               <span>{sqlView.status || "Ejecuta una consulta o elige una tabla."}</span>
+              {sqlView.more && !running ? (
+                <button
+                  type="button"
+                  className="status-action"
+                  title="Vuelve a ejecutar la consulta trayendo más filas"
+                  onClick={() => {
+                    const more = sqlView.more;
+                    if (more) void runQuery(sqlTabId, more.sql, more.limit);
+                  }}
+                >
+                  Cargar hasta {sqlView.more.limit.toLocaleString("es")} filas
+                </button>
+              ) : null}
             </div>
           </div>
           {activeTable && tableView ? (
@@ -2007,6 +2007,11 @@ export function App() {
                       }}
                     />
                     <ExportMenu disabled={running || tableView.columns.length === 0} onExport={(format) => void exportResult(activeTable.id, format)} />
+                    {writable ? (
+                      <button type="button" className="toolbar-button" disabled={running} title="Importar filas desde un archivo CSV" onClick={() => void startImport(activeTable.id, activeTable.table)}>
+                        <Upload size={14} /> Importar
+                      </button>
+                    ) : null}
                     <button type="button" className="toolbar-button" disabled={!writable || running || tableView.columns.length === 0} onClick={startDraft}>
                       <Plus size={14} /> Fila
                     </button>
@@ -2081,8 +2086,8 @@ export function App() {
                     rowCount={tableView.rowCount}
                     rowsRef={rowsHandle(activeTable.id)}
                     selectable={writable}
-                    inserts={pending[activeTable.id]?.inserts ?? []}
-                    removed={pending[activeTable.id]?.removed ?? []}
+                    inserts={pending[activeTable.id]?.inserts ?? NO_ROWS}
+                    removed={pending[activeTable.id]?.removed ?? NO_INDEXES}
                     edits={pending[activeTable.id]?.edits}
                     onEditInsert={writable ? editInsert : undefined}
                     onEditCell={writable ? editCell : undefined}
@@ -2098,7 +2103,7 @@ export function App() {
                     onCellMenu={(row, column, point, range) => setCellMenu({ tab: activeTable.id, row, column, ...point, range })}
                   />
                 ) : (
-                  tableView.error ? <ErrorPanel error={tableView.error} /> : <div className="results-empty">{tableView.status || "Cargando…"}</div>
+                  tableView.error ? <ErrorPanel error={tableView.error} action={reconnectAction(tableView.error)} /> : <div className="results-empty">{tableView.status || "Cargando…"}</div>
                 )
               ) : (
                 <pre className="definition-view">{activeTable.table.definition || "Sin definición."}</pre>
@@ -2226,6 +2231,17 @@ export function App() {
       {dialog?.kind === "drop-schema" ? (
         <ConfirmDialog title="Eliminar esquema" description={`Se elimina ${dialog.name} solo si no tiene tablas.`} confirmLabel="Eliminar" busy={running} error={formError} onClose={() => setDialog(null)} onConfirm={() => void submitDropSchema()} />
       ) : null}
+      {importing ? (
+        <ImportDialog
+          path={importing.path}
+          table={importing.table}
+          busy={importing.busy}
+          progress={importing.progress}
+          error={importing.error}
+          onClose={() => setImporting(null)}
+          onImport={(plan) => void runImport(plan)}
+        />
+      ) : null}
       {discardAsk ? (
         <UnsavedDialog items={discardAsk.items} action={discardAsk.action} onCancel={() => answerDiscard(false)} onDiscard={() => answerDiscard(true)} />
       ) : null}
@@ -2249,125 +2265,6 @@ export function App() {
   );
 }
 
-function describePending(edit: PendingChanges | undefined): string {
-  if (!edit) return "";
-  const parts: string[] = [];
-  const changed = Object.keys(edit.edits ?? {}).length;
-  if (changed === 1) parts.push("1 fila modificada");
-  else if (changed > 1) parts.push(`${changed} filas modificadas`);
-  if (edit.inserts.length === 1) parts.push("1 fila nueva");
-  else if (edit.inserts.length > 1) parts.push(`${edit.inserts.length} filas nuevas`);
-  if (edit.removed.length === 1) parts.push("1 fila por borrar");
-  else if (edit.removed.length > 1) parts.push(`${edit.removed.length} filas por borrar`);
-  return parts.length > 0 ? `${parts.join(", ")}. Guarda para aplicar.` : "";
-}
-
-/** Status text for a tab's pending edits, counting the ones kept on other pages. */
-function describeTabChanges(edit: PendingChanges | undefined, others: PageStash[]): string {
-  const here = describePending(edit);
-  if (others.length === 0) return here;
-  const pages = others.length === 1 ? "1 página más" : `${others.length} páginas más`;
-  const prefix = here ? here.replace(/\. Guarda para aplicar\.$/, "") + ". " : "";
-  return `${prefix}También hay cambios en ${pages}. Guarda para aplicar todo.`;
-}
-
-function pastedValue(text: string, column: ColumnDefinition): SqlValue {
-  const trimmed = text.trim();
-  if (trimmed === "") return { t: "null" };
-  if (isTemporalColumn(column)) {
-    const marker = canonicalTemporal(trimmed);
-    if (marker === "null") return { t: "text", v: "null" };
-    if (marker) return { t: "text", v: marker };
-    return { t: "text", v: text };
-  }
-  if (trimmed.toUpperCase() === "NULL") return { t: "null" };
-  return { t: "text", v: text };
-}
-
-function pastedRow(columns: ColumnDefinition[], cells: readonly string[], startColumn: number): SqlValue[] {
-  const origin = cells.length === columns.length ? 0 : Math.max(0, startColumn);
-  return columns.map((column, index) => {
-    if (isGeneratedColumn(column)) return { t: "null" };
-    const offset = index - origin;
-    if (offset < 0 || offset >= cells.length) return { t: "null" };
-    return pastedValue(cells[offset] ?? "", column);
-  });
-}
-
-function isHeaderRow(cells: readonly string[], columns: ColumnDefinition[]): boolean {
-  if (cells.length === 0 || columns.length === 0) return false;
-  return cells.every((cell, index) => {
-    const name = columns[index]?.name;
-    return Boolean(name) && cell.trim().toLowerCase() === name.toLowerCase();
-  });
-}
-
-function mergeColumns(columns: ColumnDefinition[], table: TableSchema): ColumnDefinition[] {
-  return columns.map((column) => {
-    const catalog = table.columns.find((item) => item.name === column.name);
-    if (!catalog) return column;
-    return {
-      ...column,
-      nullable: catalog.nullable,
-      defaultValue: catalog.defaultValue,
-      options: (catalog.options ?? []).length > 0 ? catalog.options : (column.options ?? []),
-      dataType: (catalog.options ?? []).length > 0 ? catalog.dataType : column.dataType,
-    };
-  });
-}
-
-function structureKey(table: TableSchema): string {
-  const columns = table.columns.map((column) => `${column.name}:${column.dataType}:${column.nullable}:${column.defaultValue ?? ""}:${column.primaryKey}:${(column.options ?? []).join(",")}`).join("|");
-  return `${table.schema ?? ""}.${table.name}:${columns}`;
-}
-
-function sameDisplayedRow(left: SqlValue[], right: SqlValue[]): boolean {
-  const width = Math.max(left.length, right.length);
-  for (let index = 0; index < width; index += 1) {
-    const current = left[index];
-    const original = right[index];
-    const currentText = !current || current.t === "null" ? "" : formatSqlValue(current);
-    const originalText = !original || original.t === "null" ? "" : formatSqlValue(original);
-    if (currentText !== originalText) return false;
-  }
-  return true;
-}
-
-function fieldsFromValues(columns: ColumnDefinition[], values: SqlValue[]): Record<string, CellField> {
-  const fields: Record<string, CellField> = {};
-  columns.forEach((column, index) => {
-    const value = values[index];
-    if (!value || value.t === "null") fields[column.name] = { text: "", isNull: true };
-    else fields[column.name] = { text: formatSqlValue(value), isNull: false };
-  });
-  return fields;
-}
-
-function fieldsFromDraft(table: TableSchema, columns: ColumnDefinition[], values: SqlValue[]): Record<string, CellField> {
-  const fields: Record<string, CellField> = {};
-  for (const column of table.columns) {
-    if (isGeneratedColumn(column)) continue;
-    const index = columns.findIndex((item) => item.name === column.name);
-    const value = index >= 0 ? values[index] : undefined;
-    if (!value || value.t === "null" || value.t === "bytes") {
-      fields[column.name] = { text: "", isNull: true };
-    } else if (value.t === "bool") {
-      fields[column.name] = { text: value.v ? "true" : "false", isNull: false };
-    } else {
-      fields[column.name] = { text: value.t === "text" ? value.v : formatSqlValue(value), isNull: false };
-    }
-  }
-  return fields;
-}
-
-function namesFromTables(list: TableSchema[]): string[] {
-  const names = new Set<string>();
-  for (const table of list) {
-    if (table.schema) names.add(table.schema);
-  }
-  return [...names].sort((left, right) => left.localeCompare(right));
-}
-
 async function readSchemas(connectionId: string): Promise<string[]> {
   const names: string[] = [];
   await executeQuery(
@@ -2380,258 +2277,4 @@ async function readSchemas(connectionId: string): Promise<string[]> {
     },
   );
   return names;
-}
-
-type SavedTab = {
-  schema: string | null;
-  name: string;
-  kind: TableSchema["kind"];
-  pinned: boolean;
-};
-
-type SavedSession = {
-  sql: string;
-  activeTab: string;
-  tabs: SavedTab[];
-};
-
-function sessionKey(id: string) {
-  return `gridl.session.${id}`;
-}
-
-function workspaceTabs(tabs: TableTab[]): SavedTab[] {
-  return tabs.map((tab) => ({
-    schema: tab.table.schema,
-    name: tab.table.name,
-    kind: tab.table.kind,
-    pinned: tab.pinned,
-  }));
-}
-
-function readSession(id: string): SavedSession | null {
-  try {
-    const raw = window.localStorage.getItem(sessionKey(id));
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<SavedSession>;
-    if (!parsed || typeof parsed.sql !== "string" || !Array.isArray(parsed.tabs)) return null;
-    const tabs = parsed.tabs.flatMap((tab) => {
-      if (!tab || typeof tab !== "object") return [];
-      const item = tab as Partial<SavedTab>;
-      if (typeof item.name !== "string" || typeof item.kind !== "string") return [];
-      return [{
-        schema: typeof item.schema === "string" ? item.schema : null,
-        name: item.name,
-        kind: item.kind as TableSchema["kind"],
-        pinned: item.pinned !== false,
-      }];
-    });
-    return {
-      sql: parsed.sql,
-      activeTab: typeof parsed.activeTab === "string" ? parsed.activeTab : sqlTabId,
-      tabs,
-    };
-  } catch {
-    return null;
-  }
-}
-
-function writeSession(id: string, session: SavedSession) {
-  try {
-    const sql = session.sql.length > 500_000 ? session.sql.slice(0, 500_000) : session.sql;
-    window.localStorage.setItem(sessionKey(id), JSON.stringify({ ...session, sql }));
-  } catch {
-    // The browser can reject the write when storage is full.
-  }
-}
-
-function matchTabs(saved: SavedSession | null, tables: TableSchema[]): TableTab[] {
-  if (!saved) return [];
-  const tabs: TableTab[] = [];
-  for (const item of saved.tabs) {
-    const table = tables.find((candidate) => candidate.name === item.name && (candidate.schema ?? null) === item.schema && candidate.kind === item.kind);
-    if (!table) continue;
-    const id = tableTabId(table);
-    if (tabs.some((tab) => tab.id === id)) continue;
-    tabs.push({ id, table, pinned: item.pinned });
-  }
-  return tabs;
-}
-
-function readPaneWidth(key: string, fallback: number) {
-  const stored = window.localStorage.getItem(key);
-  const value = stored === null ? Number.NaN : Number(stored);
-  return Number.isFinite(value) && value > 0 ? clampPane(value, 200, 640) : fallback;
-}
-
-function readResultsHeight() {
-  const stored = window.localStorage.getItem("gridl.results");
-  const value = stored === null ? Number.NaN : Number(stored);
-  return Number.isFinite(value) && value > 0 ? Math.max(120, value) : 320;
-}
-
-function clampResults(value: number, stage: HTMLDivElement | null) {
-  const total = stage?.clientHeight ?? 720;
-  const max = Math.max(120, total - 180);
-  return Math.min(Math.max(value, 120), max);
-}
-
-function clampPane(value: number, min: number, max: number) {
-  return Math.min(Math.max(value, min), Math.max(min, max));
-}
-
-function paneLimit(body: HTMLDivElement | null, other: number) {
-  const total = body?.clientWidth ?? 1100;
-  return total - other - 420;
-}
-
-function PaneSplitter({ label, axis = "x", onDrag }: { label: string; axis?: "x" | "y"; onDrag: (delta: number) => void }) {
-  const vertical = axis === "y";
-  return (
-    <div
-      className={vertical ? "pane-splitter row" : "pane-splitter"}
-      role="separator"
-      aria-orientation={vertical ? "horizontal" : "vertical"}
-      aria-label={label}
-      onPointerDown={(event) => {
-        if (event.button !== 0) return;
-        event.preventDefault();
-        const handle = event.currentTarget;
-        handle.setPointerCapture(event.pointerId);
-        handle.classList.add("dragging");
-        let last = vertical ? event.clientY : event.clientX;
-        const move = (next: PointerEvent) => {
-          const point = vertical ? next.clientY : next.clientX;
-          onDrag(point - last);
-          last = point;
-        };
-        const stop = () => {
-          handle.classList.remove("dragging");
-          handle.removeEventListener("pointermove", move);
-          handle.removeEventListener("pointerup", stop);
-          handle.removeEventListener("pointercancel", stop);
-        };
-        handle.addEventListener("pointermove", move);
-        handle.addEventListener("pointerup", stop);
-        handle.addEventListener("pointercancel", stop);
-      }}
-    />
-  );
-}
-
-function TablePager({
-  page,
-  running,
-  onPage,
-  onPageSize,
-  onCancel,
-}: {
-  page: TablePage | undefined;
-  running: boolean;
-  onPage: (page: number) => void;
-  onPageSize: (pageSize: number) => void;
-  onCancel: () => void;
-}) {
-  const current = page?.page ?? 0;
-  const pageSize = page?.pageSize ?? 100;
-  const total = page?.total ?? 0;
-  const pageCount = Math.max(1, Math.ceil(total / pageSize));
-  const from = total === 0 ? 0 : current * pageSize + 1;
-  const to = Math.min(total, (current + 1) * pageSize);
-  return (
-    <div className="pager">
-      <button type="button" disabled={running || current <= 0} onClick={() => onPage(current - 1)}>
-        <ChevronLeft size={14} /> Anterior
-      </button>
-      <button type="button" disabled={running || current + 1 >= pageCount} onClick={() => onPage(current + 1)}>
-        Siguiente <ChevronRight size={14} />
-      </button>
-      <span>{page ? `${from.toLocaleString("es")}–${to.toLocaleString("es")} de ${total.toLocaleString("es")}` : "Cargando…"}</span>
-      <label>
-        Filas
-        <select value={pageSize} disabled={running} onChange={(event) => onPageSize(Number(event.target.value))}>
-          {pageSizes.map((size) => (
-            <option key={size} value={size}>{size}</option>
-          ))}
-        </select>
-      </label>
-      {running ? (
-        <button type="button" onClick={onCancel}>Cancelar</button>
-      ) : null}
-    </div>
-  );
-}
-
-function TreeBranch({
-  label,
-  open,
-  onToggle,
-  depth,
-  icon,
-  active = false,
-  actions,
-  children,
-}: {
-  label: string;
-  open: boolean;
-  onToggle: () => void;
-  depth: string;
-  icon: ReactNode;
-  active?: boolean;
-  actions?: ReactNode;
-  children?: ReactNode;
-}) {
-  return (
-    <div>
-      <div className={active ? `tree-item schema-row ${depth} active` : `tree-item schema-row ${depth}`}>
-        <button type="button" className="tree-toggle" aria-expanded={open} aria-label={open ? `Contraer ${label}` : `Expandir ${label}`} onClick={onToggle}>
-          {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-        </button>
-        {icon}
-        <button type="button" className="schema-name" onClick={onToggle}>
-          <span>{label}</span>
-        </button>
-        {actions}
-      </div>
-      {open ? children : null}
-    </div>
-  );
-}
-
-function ObjectIcon({ kind, size }: { kind: TableSchema["kind"]; size: number }) {
-  if (kind === "function" || kind === "procedure") return <Braces size={size} />;
-  if (kind === "sequence") return <Hash size={size} />;
-  if (kind === "trigger") return <Zap size={size} />;
-  if (kind === "index") return <ListTree size={size} />;
-  return <Table2 size={size} />;
-}
-
-function kindLabel(kind: TableSchema["kind"]) {
-  return objectGroups.find((group) => group.kind === kind)?.label ?? kind;
-}
-
-function TableLeaf({
-  table,
-  selected,
-  className,
-  onOpen,
-}: {
-  table: TableSchema;
-  selected: TableSchema | null;
-  className: string;
-  onOpen: (table: TableSchema, pin?: boolean) => void;
-}) {
-  const active = selected?.name === table.name && (selected.schema ?? "") === (table.schema ?? "") && selected?.kind === table.kind;
-  return (
-    <button
-      type="button"
-      className={active ? `tree-item ${className} active` : `tree-item ${className}`}
-      onClick={() => onOpen(table)}
-      onDoubleClick={(event) => {
-        event.preventDefault();
-        onOpen(table, true);
-      }}
-    >
-      <ObjectIcon kind={table.kind} size={13} /> <span>{table.name}</span>
-    </button>
-  );
 }

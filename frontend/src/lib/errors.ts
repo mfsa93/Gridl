@@ -44,13 +44,18 @@ function hintFor(message: string, sql: string | null, engine: DatabaseEngine): s
   if (/read-only transaction|read only|READ ONLY|1792/i.test(message)) {
     return "La conexión está en modo solo lectura.";
   }
-  if (/is not open|not connected/i.test(message)) {
-    return "La conexión se cerró. Vuelve a Conexiones y ábrela de nuevo.";
+  if (isConnectionLost(message)) {
+    return "Se perdió la conexión con el servidor (suspensión, VPN o túnel). Pulsa Reconectar.";
   }
   if (/cannot insert multiple commands into a prepared statement/i.test(message)) {
     return "Hay varias sentencias. Usa «Todo» (⇧⌘↵) para ejecutarlas una tras otra.";
   }
   return null;
+}
+
+/** Errors that mean the session to the server is gone, so reconnecting can help. */
+export function isConnectionLost(message: string): boolean {
+  return /is not open|not connected|connection (closed|reset|refused)|broken pipe|reset by peer|unexpected eof|end of file|pool timed out|timed out while waiting|io error|server closed|terminating connection|lost connection|gone away|tunnel|channel closed/i.test(message);
 }
 
 export function describeError(raw: string, sql: string | null, engine: DatabaseEngine): ShownError {

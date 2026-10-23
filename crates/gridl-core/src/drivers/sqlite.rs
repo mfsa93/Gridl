@@ -301,10 +301,11 @@ impl DatabaseDriver for SqliteDriver {
         }))
     }
 
-    async fn execute_batch(
+    async fn execute_batch_observed(
         &self,
         id: &ConnectionId,
         batch: &BatchRequest,
+        progress: &(dyn Fn(usize) + Send + Sync),
     ) -> Result<BatchResult, CoreError> {
         let started = Instant::now();
         let pool = self.pool(id)?;
@@ -316,6 +317,7 @@ impl DatabaseDriver for SqliteDriver {
                 .await
                 .map_err(|err| batch_err(index, &err))?;
             rows_affected += done.rows_affected();
+            progress(index + 1);
         }
         transaction.commit().await.map_err(db_err)?;
         Ok(BatchResult {

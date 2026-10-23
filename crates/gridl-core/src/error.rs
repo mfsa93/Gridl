@@ -19,6 +19,9 @@ pub enum CoreError {
     Delivery(String),
     #[error("lock poisoned")]
     LockPoisoned,
+    /// Import, export, backup, or restore problem, already worded for the user.
+    #[error("{0}")]
+    Transfer(String),
     #[error("internal error: {0}")]
     Internal(String),
     #[error("io: {0}")]

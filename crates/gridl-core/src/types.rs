@@ -351,6 +351,19 @@ impl QueryRequest {
         }
         Ok(Self { query_id, sql, params, chunk_rows, max_rows, cancel })
     }
+
+    /// A query whose rows go to a file instead of the grid. It has no row cap,
+    /// because the sink writes each chunk out and keeps nothing in memory.
+    pub fn export(
+        query_id: impl Into<String>,
+        sql: impl Into<String>,
+        chunk_rows: usize,
+        cancel: Arc<AtomicBool>,
+    ) -> Result<Self, CoreError> {
+        let mut request = Self::new(query_id, sql, Vec::new(), chunk_rows, 1, cancel)?;
+        request.max_rows = u64::MAX;
+        Ok(request)
+    }
 }
 
 /// A foreign key: `columns` of `schema.table` point at `ref_columns` of the referenced table.
@@ -440,7 +453,23 @@ impl BatchRequest {
         }
         Ok(Self { statements })
     }
+
+    /// A large batch built by the app itself, such as a CSV import. It skips
+    /// the statement count cap and allows up to [`MAX_BULK_BYTES`] of SQL.
+    pub fn bulk(statements: Vec<BatchStatement>) -> Result<Self, CoreError> {
+        if statements.is_empty() {
+            return Err(CoreError::InvalidConfig("batch is empty".into()));
+        }
+        let total: usize = statements.iter().map(|statement| statement.sql.len()).sum();
+        if total > MAX_BULK_BYTES {
+            return Err(CoreError::InvalidConfig("batch exceeds 1 GiB".into()));
+        }
+        Ok(Self { statements })
+    }
 }
+
+/// Upper bound for the SQL of one [`BatchRequest::bulk`].
+pub const MAX_BULK_BYTES: usize = 1024 * 1024 * 1024;
 
 /// Summary of a committed [`BatchRequest`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

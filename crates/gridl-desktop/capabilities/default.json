@@ -1,9 +1,10 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Main Gridl window",
+  "description": "Main Gridl window and connection windows",
   "windows": [
-    "main"
+    "main",
+    "conn-*"
   ],
   "permissions": [
     "core:default",

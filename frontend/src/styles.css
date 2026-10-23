@@ -1037,7 +1037,7 @@ html.vibrant .sidebar-card, html.vibrant .explorer, html.vibrant .details-panel 
 ::-webkit-scrollbar-corner { background: transparent; }
 
 /* Forms inside sheets: every label stacks over its field, every field looks like an AppKit text field. */
-.modal label:not(.check-row):not(.check-line):not(.env-select) {
+.modal label:not(.check-row):not(.check-line):not(.env-select):not(.mapping-row) {
   display: flex;
   flex-direction: column;
   gap: 5px;
@@ -1267,3 +1267,31 @@ select {
 .unsaved-modal { width: min(480px, 100%); }
 .unsaved-icon { --env: var(--orange); }
 .unsaved-list { margin: 0; padding: 8px 10px 8px 28px; border-radius: 8px; color: var(--label); background: var(--fill); font-size: 12px; line-height: 1.6; }
+
+/* The grid repaints on every scroll frame: keep it opaque and isolated from the rest of the page. */
+.grid-wrap { contain: strict; background: var(--window); }
+.status-action { padding: 1px 8px; border-radius: 5px; color: var(--accent); background: transparent; font-size: 11px; font-weight: 500; }
+.status-action:hover { background: var(--accent-soft); }
+.error-action { height: 22px; padding: 0 10px; font-size: 12px; }
+.input-suffix { position: relative; display: block; }
+.input-suffix > span { position: absolute; top: 50%; right: 9px; transform: translateY(-50%); color: var(--label-3); font-size: 12px; pointer-events: none; }
+.modal .input-suffix input { padding-right: 22px; }
+
+/* Import sheet */
+.import-modal { width: min(720px, 100%); }
+.import-options { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; align-items: end; margin-bottom: 14px; }
+.import-options .check-row { grid-column: 1 / -1; margin-top: 0; }
+.import-mapping { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px; margin-bottom: 14px; padding: 10px 12px; border: 1px solid var(--group-border); border-radius: 8px; background: var(--group); }
+.modal label.mapping-row { display: grid; font-size: 12px; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr); align-items: center; gap: 8px; color: var(--label); }
+.mapping-row .mono { overflow: hidden; font-family: var(--mono); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.import-preview { max-height: 180px; overflow: auto; border: 1px solid var(--group-border); border-radius: 8px; }
+.import-preview table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.import-preview th { position: sticky; top: 0; padding: 4px 8px; color: var(--label-2); background: var(--toolbar); text-align: left; white-space: nowrap; }
+.import-preview td { max-width: 180px; padding: 3px 8px; overflow: hidden; border-top: 1px solid var(--separator); font-family: var(--mono); text-overflow: ellipsis; white-space: nowrap; }
+.import-preview td.null { color: var(--label-3); font-style: italic; }
+.import-progress { margin-right: auto; color: var(--label-2); font-size: 12px; font-variant-numeric: tabular-nums; }
+
+/* Backup menu in the toolbar */
+.workspace-topbar .topbar-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; min-width: 0; }
+.backup-note { max-width: 360px; overflow: hidden; color: var(--label-2); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; cursor: default; }
+.popover-menu > button:disabled { opacity: 0.35; background: transparent; color: var(--label); }

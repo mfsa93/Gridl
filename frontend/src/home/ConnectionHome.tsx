@@ -49,6 +49,8 @@ type Props = {
   onDeleteGroup: (name: string) => Promise<void>;
   onDeleteConnection: (id: string) => Promise<void>;
   onOpen: (profile: ConnectionConfig) => Promise<boolean>;
+  /** Opens the connection in a window of its own. */
+  onOpenWindow: (profile: ConnectionConfig) => void;
   onSave: (draft: Draft, openAfter: boolean) => Promise<boolean>;
   onBrowse: (kind: BrowseKind) => Promise<string | null>;
   onTest: (draft: Draft) => Promise<TestResult>;
@@ -63,6 +65,7 @@ export function ConnectionHome({
   onDeleteGroup,
   onDeleteConnection,
   onOpen,
+  onOpenWindow,
   onSave,
   onBrowse,
   onTest,
@@ -184,6 +187,7 @@ export function ConnectionHome({
                     onContextMenu={(event) =>
                       openMenu(event, [
                         { label: "Conectar", run: () => void onOpen(profile) },
+                        { label: "Abrir en ventana nueva", run: () => onOpenWindow(profile) },
                         { label: "Editar…", run: () => setPhase({ kind: "form", draft: draftFromProfile(profile) }) },
                         {
                           label: "Duplicar…",
@@ -202,7 +206,15 @@ export function ConnectionHome({
                       ])
                     }
                   >
-                    <button type="button" className="connection-card" disabled={busy} onClick={() => void onOpen(profile)}>
+                    <button
+                      type="button"
+                      className="connection-card"
+                      disabled={busy}
+                      onClick={(event) => {
+                        if (event.metaKey || event.ctrlKey) onOpenWindow(profile);
+                        else void onOpen(profile);
+                      }}
+                    >
                       <div className="db-icon" style={{ background: engine?.color ?? "#64748b" }}>
                         {engine?.short ?? "DB"}
                       </div>

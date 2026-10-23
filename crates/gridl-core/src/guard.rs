@@ -43,6 +43,9 @@ pub struct SafetySettings {
     /// Always ask before DELETE or UPDATE without WHERE, DROP, and TRUNCATE.
     #[serde(default = "default_true")]
     pub confirm_dangerous: bool,
+    /// Seconds a statement may run before Gridl cancels it. `None` means no limit.
+    #[serde(default)]
+    pub timeout_secs: Option<u32>,
 }
 
 fn default_true() -> bool {
@@ -56,6 +59,7 @@ impl Default for SafetySettings {
             writes: GuardMode::Allow,
             schema: GuardMode::Allow,
             confirm_dangerous: true,
+            timeout_secs: None,
         }
     }
 }
@@ -353,6 +357,23 @@ pub fn evaluate(policy: &SafetySettings, sql: &str) -> Verdict {
     verdict
 }
 
+/// Restoring a backup can rewrite both structure and data. It takes the
+/// stricter of the schema and write policies and always counts as dangerous.
+pub fn evaluate_restore(policy: &SafetySettings) -> Verdict {
+    let mut mode = policy.writes.max(policy.schema);
+    if policy.confirm_dangerous && mode == GuardMode::Allow {
+        mode = GuardMode::Confirm;
+    }
+    if mode == GuardMode::Allow {
+        return Verdict::allow();
+    }
+    Verdict {
+        mode,
+        reason: "restaurar un respaldo reemplaza estructura y datos".into(),
+        dangerous: true,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -363,6 +384,7 @@ mod tests {
             writes,
             schema,
             confirm_dangerous: true,
+            timeout_secs: None,
         }
     }
 
@@ -421,5 +443,32 @@ mod tests {
         assert_eq!(evaluate(&open, "truncate t").mode, GuardMode::Confirm);
         let unguarded = SafetySettings { confirm_dangerous: false, ..open };
         assert_eq!(evaluate(&unguarded, "delete from t").mode, GuardMode::Allow);
+    }
+
+    #[test]
+    fn restore_is_the_stricter_policy_and_dangerous() {
+        let open = policy(GuardMode::Allow, GuardMode::Allow);
+        let verdict = evaluate_restore(&open);
+        assert_eq!(verdict.mode, GuardMode::Confirm);
+        assert!(verdict.dangerous);
+        let unguarded = SafetySettings { confirm_dangerous: false, ..open };
+        assert_eq!(evaluate_restore(&unguarded).mode, GuardMode::Allow);
+        let writes_blocked = policy(GuardMode::Block, GuardMode::Allow);
+        let verdict = evaluate_restore(&writes_blocked);
+        assert_eq!(verdict.mode, GuardMode::Block);
+        assert!(verdict.dangerous);
+        assert_eq!(
+            evaluate_restore(&policy(GuardMode::Allow, GuardMode::Block)).mode,
+            GuardMode::Block
+        );
+    }
+
+    #[test]
+    fn timeout_is_optional_on_the_wire() {
+        let parsed: SafetySettings =
+            serde_json::from_str(r#"{"writes":"confirm"}"#).expect("parse");
+        assert_eq!(parsed.timeout_secs, None);
+        let parsed: SafetySettings = serde_json::from_str(r#"{"timeoutSecs":30}"#).expect("parse");
+        assert_eq!(parsed.timeout_secs, Some(30));
     }
 }

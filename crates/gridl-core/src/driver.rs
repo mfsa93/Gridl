@@ -76,5 +76,16 @@ pub trait DatabaseDriver: Send + Sync {
         &self,
         id: &ConnectionId,
         batch: &BatchRequest,
+    ) -> Result<BatchResult, CoreError> {
+        self.execute_batch_observed(id, batch, &|_| {}).await
+    }
+
+    /// [`DatabaseDriver::execute_batch`] that calls `progress` with the number
+    /// of statements done after each one, before the commit.
+    async fn execute_batch_observed(
+        &self,
+        id: &ConnectionId,
+        batch: &BatchRequest,
+        progress: &(dyn Fn(usize) + Send + Sync),
     ) -> Result<BatchResult, CoreError>;
 }

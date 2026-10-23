@@ -74,5 +74,6 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
+      - run: pnpm --dir frontend test
       - run: pnpm --dir frontend exec tsc --noEmit
       - run: pnpm --dir frontend exec vite build
