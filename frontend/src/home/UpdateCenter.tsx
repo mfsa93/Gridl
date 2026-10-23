@@ -17,6 +17,21 @@ type State =
   | { kind: "downloading"; update: Update; current: string; done: number; total: number | null }
   | { kind: "failed"; message: string };
 
+/** The updater plugin speaks English and in terms of HTTP; say what it means. */
+function updateError(caught: unknown): string {
+  const message = errorMessage(caught);
+  if (/valid release JSON|404|not found/i.test(message)) {
+    return "Todavía no hay ninguna versión publicada en GitHub. Si acabas de crear una, espera a que termine de compilarse.";
+  }
+  if (/network|dns|connect|timed out|offline|error sending request/i.test(message)) {
+    return "No hay conexión con GitHub. Revisa tu conexión a internet e inténtalo de nuevo.";
+  }
+  if (/signature/i.test(message)) {
+    return "La actualización no tiene una firma válida y no se instaló.";
+  }
+  return message;
+}
+
 function isMainWindow(): boolean {
   try {
     return getCurrentWebviewWindow().label === "main";
@@ -44,7 +59,7 @@ export function UpdateCenter({ beforeRestart }: { beforeRestart: () => Promise<b
       else setState(manual ? { kind: "current", version: current } : { kind: "idle" });
     } catch (caught) {
       // A silent check at startup should not bother anyone when offline.
-      setState(manual ? { kind: "failed", message: errorMessage(caught) } : { kind: "idle" });
+      setState(manual ? { kind: "failed", message: updateError(caught) } : { kind: "idle" });
     }
   }, []);
 
@@ -82,7 +97,7 @@ export function UpdateCenter({ beforeRestart }: { beforeRestart: () => Promise<b
       });
       await relaunch();
     } catch (caught) {
-      setState({ kind: "failed", message: errorMessage(caught) });
+      setState({ kind: "failed", message: updateError(caught) });
     }
   };
 
@@ -96,7 +111,7 @@ export function UpdateCenter({ beforeRestart }: { beforeRestart: () => Promise<b
           <h2>
             {state.kind === "checking" ? "Buscando actualizaciones…"
               : state.kind === "current" ? "Gridl está al día"
-                : state.kind === "failed" ? "No se pudo actualizar"
+                : state.kind === "failed" ? "No se pudo buscar actualizaciones"
                   : `Gridl ${state.update.version} está disponible`}
           </h2>
           {busy ? null : (
