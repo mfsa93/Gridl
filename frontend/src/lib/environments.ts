@@ -1,10 +1,11 @@
 import type { Environment } from "./api";
+import { t } from "./i18n";
 
 export const environments: { id: Environment; label: string }[] = [
-  { id: "local", label: "Local" },
-  { id: "development", label: "Desarrollo" },
-  { id: "staging", label: "Staging" },
-  { id: "production", label: "Producción" },
+  { id: "local", label: t("environment.local") },
+  { id: "development", label: t("environment.development") },
+  { id: "staging", label: t("environment.staging") },
+  { id: "production", label: t("environment.production") },
 ];
 
 export function environmentLabel(environment: Environment): string {

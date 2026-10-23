@@ -1,6 +1,8 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen, type EventCallback, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { CodedError } from "./errors";
+import { t } from "./i18n";
 
 export type DatabaseEngine = "sqlite" | "postgres" | "mysql";
 export type TlsMode = "prefer" | "disable" | "require" | "verify-ca" | "verify-full";
@@ -82,10 +84,11 @@ export type GuardInfo = {
   sql: string;
 };
 
-export class GuardError extends Error {
+export class GuardError extends CodedError {
   readonly info: GuardInfo;
   constructor(info: GuardInfo) {
-    super(info.mode === "block" ? `Bloqueado por la política de seguridad: ${info.reason}` : `Necesita autorización: ${info.reason}`);
+    const blocked = info.mode === "block";
+    super(blocked ? "blocked" : "needs-authorization", t(blocked ? "error.blocked" : "error.needsAuthorization", { reason: info.reason }));
     this.info = info;
   }
 }
@@ -214,7 +217,7 @@ export function qualifiedName(table: TableSchema): string {
 export function errorMessage(error: unknown): string {
   if (typeof error === "string") return error;
   if (error instanceof Error) return error.message;
-  return "Error inesperado";
+  return t("error.unexpected");
 }
 
 export function listProfiles(): Promise<ConnectionCatalog> {
