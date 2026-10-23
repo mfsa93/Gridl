@@ -1,3 +1,5 @@
+import { CodedError } from "../lib/errors";
+import { t } from "../lib/i18n";
 import { foreignKeyClause, type FkAction } from "./relations";
 import { quoteIdent, qualifiedName, type ColumnDefinition, type DatabaseEngine, type SqlValue, type TableSchema } from "../lib/api";
 
@@ -204,19 +206,19 @@ export function dropSchemaSql(name: string): string {
 
 export function addColumnSql(table: TableSchema, column: AddedColumn, engine: DatabaseEngine): string {
   const spec = columnTypeSpecs(engine).find((item) => item.name === column.dataType);
-  if (!spec) throw new Error("Elige un tipo de la lista");
+  if (!spec) throw new Error(t("changes.pickType"));
   const type = columnTypeClause(spec, column);
   const parts = [`alter table ${qualifiedName(table)} add column ${quoteIdent(requireName(column.name))} ${type}`];
   if (!spec.generated) {
     const fallback = defaultClause(column.defaultValue);
     if (fallback) parts.push(fallback);
     if (!column.nullable) {
-      if (!fallback) throw new Error("Una columna obligatoria necesita un valor predeterminado para las filas que ya existen");
+      if (!fallback) throw new Error(t("changes.requiredNeedsDefault"));
       parts.push("not null");
     }
   }
   if (column.unique) {
-    if (engine === "sqlite") throw new Error("SQLite no permite marcar única una columna al agregarla");
+    if (engine === "sqlite") throw new Error(t("changes.sqliteNoUniqueOnAdd"));
     parts.push("unique");
   }
   return parts.join(" ");
@@ -321,7 +323,7 @@ export function columnChangeSql(table: TableSchema, rows: ColumnDraft[], engine:
   for (const row of active) {
     if (row.dropped) continue;
     const name = requireName(row.name).toLowerCase();
-    if (names.has(name)) throw new Error(`La columna ${row.name.trim()} está repetida`);
+    if (names.has(name)) throw new Error(t("changes.duplicateColumn", { name: row.name.trim() }));
     names.add(name);
   }
   const statements: string[] = [];
@@ -339,7 +341,7 @@ export function columnChangeSql(table: TableSchema, rows: ColumnDraft[], engine:
     const nullDiff = row.nullable !== row.originalNullable;
     const defaultDiff = row.defaultValue.trim() !== row.originalDefault.trim();
     if (!typeDiff && !nullDiff && !defaultDiff) continue;
-    if (engine === "sqlite") throw new Error("SQLite solo permite renombrar, agregar o quitar columnas");
+    if (engine === "sqlite") throw new Error(t("changes.sqliteOnlyRenameAddDrop"));
     const current = quoteIdent(next);
     if (engine === "mysql") {
       statements.push(mysqlModifySql(qualified, current, row, typeDiff));
@@ -385,17 +387,17 @@ export function createTableSql(schema: string | null, tableName: string, columns
     name: requireName(column.name),
     dataType: requireType(column.dataType, engine),
   }));
-  if (usable.length === 0) throw new Error("Agrega al menos una columna");
+  if (usable.length === 0) throw new Error(t("changes.addColumn"));
   const seen = new Set<string>();
   for (const column of usable) {
     const key = column.name.toLowerCase();
-    if (seen.has(key)) throw new Error(`La columna ${column.name} está repetida`);
+    if (seen.has(key)) throw new Error(t("changes.duplicateColumn", { name: column.name }));
     seen.add(key);
   }
   const keys = usable.filter((column) => column.primaryKey).map((column) => quoteIdent(column.name));
   const lines = usable.map((column) => {
     const spec = columnTypeSpecs(engine).find((item) => item.name === column.dataType);
-    if (!spec) throw new Error("Elige un tipo de la lista");
+    if (!spec) throw new Error(t("changes.pickType"));
     const [first = "", second = ""] = column.size.split(",").map((part) => part.trim());
     const sizedColumn = {
       name: column.name,
@@ -448,7 +450,7 @@ export function insertSql(
     const value = cellValue(column, field);
     if (value.t === "null") {
       if (column.nullable || column.defaultValue) continue;
-      throw new Error(`${column.name} es obligatorio`);
+      throw new Error(t("changes.required", { name: column.name }));
     }
     names.push(quoteIdent(column.name));
     values.push(bind(engine, params, value, column));
@@ -470,21 +472,21 @@ export function updateSql(
   fields: Record<string, CellField>,
 ): { sql: string; params: SqlValue[] } {
   const keys = primaryKeys(table);
-  if (keys.length === 0) throw new Error("Esta tabla no tiene clave primaria");
+  if (keys.length === 0) throw new Error(t("changes.noPrimaryKey"));
   const params: SqlValue[] = [];
   const sets: string[] = [];
   for (const column of table.columns) {
     const field = fields[column.name];
     if (!field) continue;
     const next = cellValue(column, field);
-    if (next.t === "null" && !column.nullable) throw new Error(`${column.name} no acepta NULL`);
+    if (next.t === "null" && !column.nullable) throw new Error(t("changes.notNull", { name: column.name }));
     if (valuesEqual(original[column.name], next)) continue;
     sets.push(`${quoteIdent(column.name)} = ${bind(engine, params, next, column)}`);
   }
-  if (sets.length === 0) throw new Error("No hay cambios");
+  if (sets.length === 0) throw new CodedError("no-changes", t("error.noChanges"));
   const where = keys.map((column) => {
     const current = original[column.name] ?? { t: "null" };
-    if (current.t === "null") throw new Error(`La clave ${column.name} es NULL y no se puede usar para guardar`);
+    if (current.t === "null") throw new Error(t("changes.nullKeySave", { name: column.name }));
     return `${quoteIdent(column.name)} = ${bind(engine, params, current, column)}`;
   });
   return {
@@ -495,11 +497,11 @@ export function updateSql(
 
 export function deleteSql(engine: DatabaseEngine, table: TableSchema, original: Record<string, SqlValue>): { sql: string; params: SqlValue[] } {
   const keys = primaryKeys(table);
-  if (keys.length === 0) throw new Error("Esta tabla no tiene clave primaria");
+  if (keys.length === 0) throw new Error(t("changes.noPrimaryKey"));
   const params: SqlValue[] = [];
   const where = keys.map((column) => {
     const current = original[column.name] ?? { t: "null" };
-    if (current.t === "null") throw new Error(`La clave ${column.name} es NULL y no se puede borrar con seguridad`);
+    if (current.t === "null") throw new Error(t("changes.nullKeyDelete", { name: column.name }));
     return `${quoteIdent(column.name)} = ${bind(engine, params, current, column)}`;
   });
   return { sql: `delete from ${qualifiedName(table)} where ${where.join(" and ")}`, params };
@@ -534,29 +536,29 @@ export function canEditRows(table: TableSchema, readOnly: boolean): boolean {
 
 function requireName(value: string): string {
   const name = value.trim();
-  if (!name) throw new Error("El nombre es obligatorio");
-  if (name.length > 63) throw new Error("El nombre supera 63 caracteres");
+  if (!name) throw new Error(t("changes.nameRequired"));
+  if (name.length > 63) throw new Error(t("changes.nameTooLong"));
   return name;
 }
 
 function requireType(value: string, engine: DatabaseEngine): string {
   const type = columnTypes(engine).find((item) => item === value);
-  if (!type) throw new Error("Elige un tipo de la lista");
+  if (!type) throw new Error(t("changes.pickType"));
   return type;
 }
 
 function columnTypeClause(spec: ColumnTypeSpec, column: AddedColumn): string {
   if (spec.kind === "length") {
-    const length = optionalInt(column.length, 1, 10485760, "La longitud");
+    const length = optionalInt(column.length, 1, 10485760, t("changes.length"));
     return length === null ? spec.name : `${spec.name}(${length})`;
   }
   if (spec.kind === "numeric") {
-    const precision = optionalInt(column.precision, 1, 1000, "La precisión");
+    const precision = optionalInt(column.precision, 1, 1000, t("changes.precision"));
     if (precision === null) {
-      if (column.scale.trim()) throw new Error("La escala necesita una precisión");
+      if (column.scale.trim()) throw new Error(t("changes.scaleNeedsPrecision"));
       return spec.name;
     }
-    const scale = optionalInt(column.scale, 0, precision, "La escala");
+    const scale = optionalInt(column.scale, 0, precision, t("changes.scale"));
     return scale === null ? `${spec.name}(${precision})` : `${spec.name}(${precision},${scale})`;
   }
   return spec.name;
@@ -565,9 +567,9 @@ function columnTypeClause(spec: ColumnTypeSpec, column: AddedColumn): string {
 function optionalInt(value: string, min: number, max: number, label: string): number | null {
   const text = value.trim();
   if (!text) return null;
-  if (!/^\d+$/.test(text)) throw new Error(`${label} tiene que ser un número`);
+  if (!/^\d+$/.test(text)) throw new Error(t("changes.notANumber", { label }));
   const parsed = Number(text);
-  if (parsed < min || parsed > max) throw new Error(`${label} tiene que estar entre ${min} y ${max}`);
+  if (parsed < min || parsed > max) throw new Error(t("changes.outOfRange", { label, min, max }));
   return parsed;
 }
 
@@ -619,7 +621,7 @@ function addedFrom(row: ColumnDraft): AddedColumn {
 
 function draftTypeClause(row: ColumnDraft, engine: DatabaseEngine): string {
   const spec = columnTypeSpecs(engine).find((item) => item.name === row.dataType);
-  if (!spec) throw new Error(`El tipo ${row.dataType} no se puede cambiar desde aquí`);
+  if (!spec) throw new Error(t("changes.typeNotEditable", { type: row.dataType }));
   return columnTypeClause(spec, addedFrom(row));
 }
 

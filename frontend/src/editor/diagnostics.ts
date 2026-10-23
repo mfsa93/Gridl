@@ -2,6 +2,7 @@ import { linter, type Diagnostic } from "@codemirror/lint";
 import type { DatabaseEngine, SqlCheck } from "../lib/api";
 import { describeError } from "../lib/errors";
 import { statementRanges, type StatementRange } from "./activeSql";
+import { t } from "../lib/i18n";
 
 export type SqlChecker = {
   /** Identifies the connection so cached results never leak across databases. */
@@ -82,7 +83,7 @@ export function diagnosticFor(range: StatementRange, result: SqlCheck, engine: D
     from,
     to: Math.max(to, from + 1),
     severity: "error",
-    source: "base de datos",
+    source: t("editor.diagnosticSource"),
     message: shown.hint ? `${shown.message}\n${shown.hint}` : shown.message,
   };
 }

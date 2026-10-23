@@ -18,6 +18,7 @@ import { errorMessage, type BrowseKind, type ConnectionCatalog, type ConnectionC
 import { environmentLabel } from "../lib/environments";
 import { SafetyFields } from "./SafetyFields";
 import { blankDraft, draftFromProfile, subtitle, type Draft } from "./draft";
+import { plural, t } from "../lib/i18n";
 
 export type HomeCommand = { nonce: number; kind: "new-connection" | "new-group" };
 
@@ -36,9 +37,9 @@ type EngineOption = {
 };
 
 const ENGINES: EngineOption[] = [
-  { id: "postgres", short: "Pg", name: "PostgreSQL", color: "#3b82f6", description: "Potente y flexible" },
-  { id: "mysql", short: "My", name: "MySQL / MariaDB", color: "#f59e0b", description: "El clásico de la web" },
-  { id: "sqlite", short: "Sl", name: "SQLite", color: "#8b5cf6", description: "Local y ligero" },
+  { id: "postgres", short: "Pg", name: "PostgreSQL", color: "#3b82f6", description: t("home.engine.postgres") },
+  { id: "mysql", short: "My", name: "MySQL / MariaDB", color: "#f59e0b", description: t("home.engine.mysql") },
+  { id: "sqlite", short: "Sl", name: "SQLite", color: "#8b5cf6", description: t("home.engine.sqlite") },
 ];
 
 type Props = {
@@ -124,31 +125,31 @@ export function ConnectionHome({
               ref={searchRef}
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Buscar conexión..."
+              placeholder={t("home.search")}
             />
             <kbd>
               <Command size={11} /> K
             </kbd>
           </div>
           <button type="button" className="secondary-button" onClick={() => setPhase({ kind: "group" })}>
-            <Folder size={16} /> Nuevo grupo
+            <Folder size={16} /> {t("home.newGroup")}
           </button>
           <button type="button" className="primary-button" onClick={() => setPhase({ kind: "choose", group: space === "all" ? "" : space, draft: null })}>
-            <Plus size={17} /> Nueva conexión
+            <Plus size={17} /> {t("home.newConnection")}
           </button>
         </section>
 
         <section className="workspace-grid">
           <aside className="sidebar-card">
             <div className="sidebar-heading">
-              <span>Espacios</span>
+              <span>{t("home.spaces")}</span>
             </div>
             <button type="button" className={space === "all" ? "nav-row active" : "nav-row"} onClick={() => setSpace("all")}>
-              <Layers3 size={16} /> Todas las conexiones <span>{catalog.profiles.length}</span>
+              <Layers3 size={16} /> {t("home.allConnections")} <span>{catalog.profiles.length}</span>
             </button>
             <div className="sidebar-heading group-heading">
-              <span>Grupos</span>
-              <button type="button" className="tiny-icon" aria-label="Nuevo grupo" onClick={() => setPhase({ kind: "group" })}>
+              <span>{t("home.groups")}</span>
+              <button type="button" className="tiny-icon" aria-label={t("home.newGroup")} onClick={() => setPhase({ kind: "group" })}>
                 <Plus size={15} />
               </button>
             </div>
@@ -163,17 +164,15 @@ export function ConnectionHome({
               );
             })}
             <div className="sidebar-footer">
-              <ShieldCheck size={14} /> Las contraseñas se guardan en el llavero del sistema.
+              <ShieldCheck size={14} /> {t("home.keychainNote")}
             </div>
           </aside>
 
           <section className="connections-panel">
             <div className="panel-heading">
               <div>
-                <h2>{space === "all" ? "Todas las conexiones" : space}</h2>
-                <p>
-                  {filtered.length} {filtered.length === 1 ? "conexión" : "conexiones"}
-                </p>
+                <h2>{space === "all" ? t("home.allConnections") : space}</h2>
+                <p>{plural("home.connectionCount", filtered.length)}</p>
               </div>
             </div>
             {error ? <p className="form-error">{error}</p> : null}
@@ -186,21 +185,21 @@ export function ConnectionHome({
                     className="connection-card-wrap"
                     onContextMenu={(event) =>
                       openMenu(event, [
-                        { label: "Conectar", run: () => void onOpen(profile) },
-                        { label: "Abrir en ventana nueva", run: () => onOpenWindow(profile) },
-                        { label: "Editar…", run: () => setPhase({ kind: "form", draft: draftFromProfile(profile) }) },
+                        { label: t("home.menu.connect"), run: () => void onOpen(profile) },
+                        { label: t("home.menu.openWindow"), run: () => onOpenWindow(profile) },
+                        { label: t("home.menu.edit"), run: () => setPhase({ kind: "form", draft: draftFromProfile(profile) }) },
                         {
-                          label: "Duplicar…",
+                          label: t("home.menu.duplicate"),
                           run: () =>
                             setPhase({
                               kind: "form",
-                              draft: { ...draftFromProfile(profile), id: crypto.randomUUID(), name: `${profile.name} (copia)`, credentialAccount: null, sshCredentialAccount: null },
+                              draft: { ...draftFromProfile(profile), id: crypto.randomUUID(), name: t("home.copyName", { name: profile.name }), credentialAccount: null, sshCredentialAccount: null },
                             }),
                         },
                         {
-                          label: "Quitar",
+                          label: t("home.menu.remove"),
                           run: () => {
-                            if (window.confirm(`¿Quitar “${profile.name}”?`)) void onDeleteConnection(profile.id);
+                            if (window.confirm(t("home.confirmRemove", { name: profile.name }))) void onDeleteConnection(profile.id);
                           },
                         },
                       ])
@@ -229,8 +228,8 @@ export function ConnectionHome({
                       ) : null}
                       <div className="connection-type">{engine?.name ?? profile.engine}</div>
                       <div className="connection-last">
-                        Guardada
-                        <span>{profile.group ?? "Sin grupo"}</span>
+                        {t("home.saved")}
+                        <span>{profile.group ?? t("home.noGroup")}</span>
                       </div>
                       <ChevronRight className="chevron" size={18} />
                     </button>
@@ -240,8 +239,8 @@ export function ConnectionHome({
               {filtered.length === 0 ? (
                 <div className="empty-state">
                   <Search size={28} />
-                  <strong>No hay conexiones aquí</strong>
-                  <span>Crea una o prueba con otro nombre.</span>
+                  <strong>{t("home.empty.title")}</strong>
+                  <span>{t("home.empty.body")}</span>
                 </div>
               ) : null}
             </div>
@@ -251,14 +250,14 @@ export function ConnectionHome({
               onClick={() => setPhase({ kind: "choose", group: space === "all" ? "" : space, draft: null })}
             >
               <Plus size={18} />
-              <span>{space === "all" ? "Agregar una nueva conexión" : `Agregar conexión en ${space}`}</span>
+              <span>{space === "all" ? t("home.addConnection") : t("home.addConnectionIn", { group: space })}</span>
               <kbd>⌘ N</kbd>
             </button>
           </section>
         </section>
 
         <footer className="home-footer">
-          <span>Versión 0.1.0</span>
+          <span>{t("home.version", { version: "0.1.0" })}</span>
         </footer>
       </main>
 
@@ -292,7 +291,7 @@ export function ConnectionHome({
             const ok = await onSave(draft, openAfter);
             if (ok && !openAfter) {
               setPhase({ kind: "list" });
-              showNotice("Conexión guardada");
+              showNotice(t("home.notice.saved"));
             }
           }}
         />
@@ -306,7 +305,7 @@ export function ConnectionHome({
             if (!ok) return;
             setPhase({ kind: "list" });
             setSpace(name);
-            showNotice("Grupo creado");
+            showNotice(t("home.notice.groupCreated"));
           }}
         />
       ) : null}
@@ -323,9 +322,9 @@ export function ConnectionHome({
 function groupActions(name: string, onDeleteGroup: (name: string) => Promise<void>): RowMenu["items"] {
   return [
     {
-      label: "Quitar grupo",
+      label: t("home.menu.removeGroup"),
       run: () => {
-        if (window.confirm(`¿Quitar el grupo “${name}”? Las conexiones se quedan sin grupo.`)) {
+        if (window.confirm(t("home.confirmRemoveGroup", { name }))) {
           void onDeleteGroup(name);
         }
       },
@@ -370,10 +369,10 @@ function ConnectionModal({
       <div className={draft ? "modal details-modal" : "modal"}>
         <div className="modal-topline">
           <div>
-            <span className="modal-kicker">Nueva conexión</span>
-            <h2>{draft ? `Conectar a ${engine?.name}` : "Elige tu motor"}</h2>
+            <span className="modal-kicker">{t("home.newConnection")}</span>
+            <h2>{draft ? t("home.connectTo", { engine: engine?.name ?? "" }) : t("home.chooseEngine")}</h2>
           </div>
-          <button type="button" className="close-button" onClick={onClose} aria-label="Cerrar">
+          <button type="button" className="close-button" onClick={onClose} aria-label={t("home.close")}>
             <X size={18} />
           </button>
         </div>
@@ -394,10 +393,10 @@ function ConnectionModal({
           />
         ) : (
           <>
-            <p className="modal-description">Selecciona el motor que quieres añadir a tu espacio de trabajo.</p>
+            <p className="modal-description">{t("home.chooseEngine.description")}</p>
             <div className="modal-search">
               <Search size={16} />
-              <input value={filter} placeholder="Buscar motor de base de datos..." onChange={(event) => setFilter(event.target.value)} />
+              <input value={filter} placeholder={t("home.searchEngine")} onChange={(event) => setFilter(event.target.value)} />
             </div>
             <div className="database-options">
               {engines.map((item) => (
@@ -421,10 +420,10 @@ function ConnectionModal({
             </div>
             <div className="modal-footer">
               <button type="button" className="secondary-button" onClick={onClose}>
-                Cancelar
+                {t("home.cancel")}
               </button>
               <button type="button" className="primary-button" onClick={() => onChoose(selected)}>
-                Continuar <ChevronRight size={16} />
+                {t("home.continue")} <ChevronRight size={16} />
               </button>
             </div>
           </>
@@ -435,11 +434,11 @@ function ConnectionModal({
 }
 
 const TLS_MODES: { id: TlsMode; label: string }[] = [
-  { id: "prefer", label: "Preferir" },
-  { id: "disable", label: "Desactivar" },
-  { id: "require", label: "Exigir" },
-  { id: "verify-ca", label: "Verificar CA" },
-  { id: "verify-full", label: "Verificar host" },
+  { id: "prefer", label: t("home.tls.prefer") },
+  { id: "disable", label: t("home.tls.disable") },
+  { id: "require", label: t("home.tls.require") },
+  { id: "verify-ca", label: t("home.tls.verifyCa") },
+  { id: "verify-full", label: t("home.tls.verifyFull") },
 ];
 
 function DetailsStep({
@@ -497,11 +496,11 @@ function DetailsStep({
       }}
     >
       <button type="button" className="back-link" onClick={onBack}>
-        <ChevronLeft size={14} /> Cambiar motor
+        <ChevronLeft size={14} /> {t("home.changeEngine")}
       </button>
       <div className="security-tabs">
         <button type="button" className={section === "general" ? "active" : ""} onClick={() => setSection("general")}>
-          General
+          {t("home.tab.general")}
         </button>
         {draft.engine !== "sqlite" ? (
           <>
@@ -509,7 +508,7 @@ function DetailsStep({
               SSL
             </button>
             <button type="button" className={section === "tunnel" ? "active" : ""} onClick={() => setSection("tunnel")}>
-              Túnel
+              {t("home.tab.tunnel")}
             </button>
           </>
         ) : null}
@@ -518,12 +517,12 @@ function DetailsStep({
         <>
           <div className="form-grid">
             <label>
-              Nombre de la conexión
+              {t("home.form.name")}
               <input value={draft.name} onChange={(event) => patch({ name: event.target.value })} />
             </label>
             <label>
-              Grupo
-              <input list="connection-groups" value={draft.group} placeholder="Sin grupo" onChange={(event) => patch({ group: event.target.value })} />
+              {t("home.form.group")}
+              <input list="connection-groups" value={draft.group} placeholder={t("home.noGroup")} onChange={(event) => patch({ group: event.target.value })} />
               <datalist id="connection-groups">
                 {groups.map((group) => (
                   <option key={group} value={group} />
@@ -532,10 +531,10 @@ function DetailsStep({
             </label>
             {draft.engine === "sqlite" ? (
               <label className="span-2">
-                Archivo
+                {t("home.form.file")}
                 <div className="password-input">
-                  <input value={draft.database} placeholder="/ruta/a/datos.sqlite" onChange={(event) => patch({ database: event.target.value })} />
-                  <button type="button" aria-label="Elegir archivo" onClick={() => pick("sqlite", (database) => patch({ database }))}>
+                  <input value={draft.database} placeholder={t("home.form.filePlaceholder")} onChange={(event) => patch({ database: event.target.value })} />
+                  <button type="button" aria-label={t("home.form.chooseFile")} onClick={() => pick("sqlite", (database) => patch({ database }))}>
                     <Folder size={16} />
                   </button>
                 </div>
@@ -543,32 +542,32 @@ function DetailsStep({
             ) : (
               <>
                 <label>
-                  Host
+                  {t("home.form.host")}
                   <input value={draft.host} onChange={(event) => patch({ host: event.target.value })} />
                 </label>
                 <label>
-                  Puerto
+                  {t("home.form.port")}
                   <input value={draft.port} onChange={(event) => patch({ port: event.target.value })} />
                 </label>
                 <label>
-                  Base de datos
+                  {t("home.form.database")}
                   <input value={draft.database} onChange={(event) => patch({ database: event.target.value })} />
                 </label>
                 <label>
-                  Usuario
+                  {t("home.form.username")}
                   <input value={draft.username} onChange={(event) => patch({ username: event.target.value })} />
                 </label>
                 <label className="span-2">
-                  Contraseña
+                  {t("home.form.password")}
                   <div className="password-input">
                     <input
                       type={showPassword ? "text" : "password"}
                       autoComplete="off"
                       value={draft.password}
-                      placeholder={draft.credentialAccount ? "Guardada en el llavero" : ""}
+                      placeholder={draft.credentialAccount ? t("home.form.inKeychain") : ""}
                       onChange={(event) => patch({ password: event.target.value })}
                     />
-                    <button type="button" onClick={onTogglePassword} aria-label={showPassword ? "Ocultar contraseña" : "Mostrar contraseña"}>
+                    <button type="button" onClick={onTogglePassword} aria-label={showPassword ? t("home.form.hidePassword") : t("home.form.showPassword")}>
                       {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                     </button>
                   </div>
@@ -579,17 +578,17 @@ function DetailsStep({
           {draft.engine !== "sqlite" ? (
             <label className="check-row">
               <input type="checkbox" checked={draft.rememberPassword} onChange={(event) => patch({ rememberPassword: event.target.checked })} />
-              Guardar contraseña en el llavero
+              {t("home.form.rememberPassword")}
             </label>
           ) : (
             <label className="check-row">
               <input type="checkbox" checked={draft.createIfMissing} onChange={(event) => patch({ createIfMissing: event.target.checked })} />
-              Crear el archivo si no existe
+              {t("home.form.createIfMissing")}
             </label>
           )}
           <div className="secure-note">
             <LockKeyhole size={15} />
-            <span>La contraseña no se guarda en el archivo de conexiones.</span>
+            <span>{t("home.form.passwordNote")}</span>
           </div>
           <SafetyFields safety={draft.safety} onChange={(safety) => patch({ safety })} />
         </>
@@ -597,7 +596,7 @@ function DetailsStep({
       {draft.engine !== "sqlite" && section === "ssl" ? (
         <div className="form-grid">
           <label className="span-2">
-            Modo SSL
+            {t("home.form.sslMode")}
             <select value={draft.tlsMode} onChange={(event) => patch({ tlsMode: event.target.value as TlsMode })}>
               {TLS_MODES.map((mode) => (
                 <option key={mode.id} value={mode.id}>
@@ -607,34 +606,34 @@ function DetailsStep({
             </select>
           </label>
           <label className="span-2">
-            Certificado CA
+            {t("home.form.caCert")}
             <div className="password-input">
               <input value={draft.tlsRootCert} placeholder="ca.crt" onChange={(event) => patch({ tlsRootCert: event.target.value })} />
-              <button type="button" aria-label="Elegir certificado" onClick={() => pick("certificate", (tlsRootCert) => patch({ tlsRootCert }))}>
+              <button type="button" aria-label={t("home.form.chooseCert")} onClick={() => pick("certificate", (tlsRootCert) => patch({ tlsRootCert }))}>
                 <Folder size={16} />
               </button>
             </div>
           </label>
           <label className="span-2">
-            Certificado cliente
+            {t("home.form.clientCert")}
             <div className="password-input">
               <input value={draft.tlsClientCert} placeholder="client.crt" onChange={(event) => patch({ tlsClientCert: event.target.value })} />
-              <button type="button" aria-label="Elegir certificado cliente" onClick={() => pick("certificate", (tlsClientCert) => patch({ tlsClientCert }))}>
+              <button type="button" aria-label={t("home.form.chooseClientCert")} onClick={() => pick("certificate", (tlsClientCert) => patch({ tlsClientCert }))}>
                 <Folder size={16} />
               </button>
             </div>
           </label>
           <label className="span-2">
-            Llave cliente
+            {t("home.form.clientKey")}
             <div className="password-input">
               <input value={draft.tlsClientKey} placeholder="client.key" onChange={(event) => patch({ tlsClientKey: event.target.value })} />
-              <button type="button" aria-label="Elegir llave" onClick={() => pick("key", (tlsClientKey) => patch({ tlsClientKey }))}>
+              <button type="button" aria-label={t("home.form.chooseKey")} onClick={() => pick("key", (tlsClientKey) => patch({ tlsClientKey }))}>
                 <Folder size={16} />
               </button>
             </div>
           </label>
           {draft.sshEnabled && draft.tlsMode === "verify-full" ? (
-            <p className="field-hint span-2">Con túnel, verificar host comprueba 127.0.0.1. Usa Verificar CA si el certificado es del servidor real.</p>
+            <p className="field-hint span-2">{t("home.form.verifyFullTunnel")}</p>
           ) : null}
         </div>
       ) : null}
@@ -642,65 +641,65 @@ function DetailsStep({
         <>
           <label className="check-row">
             <input type="checkbox" checked={draft.sshEnabled} onChange={(event) => patch({ sshEnabled: event.target.checked })} />
-            Conectar a través de un túnel SSH
+            {t("home.form.useSsh")}
           </label>
           {draft.sshEnabled ? (
             <div className="form-grid">
               <label>
-                Servidor SSH
-                <input value={draft.sshHost} placeholder="bastion.empresa.com" onChange={(event) => patch({ sshHost: event.target.value })} />
+                {t("home.form.sshHost")}
+                <input value={draft.sshHost} placeholder={t("home.form.sshHostPlaceholder")} onChange={(event) => patch({ sshHost: event.target.value })} />
               </label>
               <label>
-                Puerto
+                {t("home.form.port")}
                 <input value={draft.sshPort} onChange={(event) => patch({ sshPort: event.target.value })} />
               </label>
               <label>
-                Usuario
+                {t("home.form.username")}
                 <input value={draft.sshUsername} onChange={(event) => patch({ sshUsername: event.target.value })} />
               </label>
               <label>
-                Autenticación
+                {t("home.form.sshAuth")}
                 <select value={draft.sshAuth} onChange={(event) => patch({ sshAuth: event.target.value === "password" ? "password" : "key" })}>
-                  <option value="key">Llave privada</option>
-                  <option value="password">Contraseña</option>
+                  <option value="key">{t("home.form.privateKey")}</option>
+                  <option value="password">{t("home.form.password")}</option>
                 </select>
               </label>
               {draft.sshAuth === "key" ? (
                 <label className="span-2">
-                  Llave privada
+                  {t("home.form.privateKey")}
                   <div className="password-input">
                     <input value={draft.sshPrivateKey} placeholder="~/.ssh/id_ed25519" onChange={(event) => patch({ sshPrivateKey: event.target.value })} />
-                    <button type="button" aria-label="Elegir llave" onClick={() => pick("key", (sshPrivateKey) => patch({ sshPrivateKey }))}>
+                    <button type="button" aria-label={t("home.form.chooseKey")} onClick={() => pick("key", (sshPrivateKey) => patch({ sshPrivateKey }))}>
                       <Folder size={16} />
                     </button>
                   </div>
                 </label>
               ) : null}
               <label className="span-2">
-                {draft.sshAuth === "key" ? "Frase de la llave" : "Contraseña SSH"}
+                {draft.sshAuth === "key" ? t("home.form.passphrase") : t("home.form.sshPassword")}
                 <input
                   type="password"
                   autoComplete="off"
                   value={draft.sshSecret}
-                  placeholder={draft.sshCredentialAccount ? "Guardada en el llavero" : ""}
+                  placeholder={draft.sshCredentialAccount ? t("home.form.inKeychain") : ""}
                   onChange={(event) => patch({ sshSecret: event.target.value })}
                 />
               </label>
               <label className="check-row span-2">
                 <input type="checkbox" checked={draft.rememberSshSecret} onChange={(event) => patch({ rememberSshSecret: event.target.checked })} />
-                Guardar en el llavero
+                {t("home.form.rememberSecret")}
               </label>
               {draft.sshHostFingerprint ? (
                 <p className="field-hint span-2">
-                  Clave del servidor: {draft.sshHostFingerprint}{" "}
+                  {t("home.form.hostKey", { fingerprint: draft.sshHostFingerprint })}{" "}
                   <button type="button" className="text-button" onClick={() => patch({ sshHostFingerprint: "", trustSshHost: false })}>
-                    Olvidar
+                    {t("home.form.forget")}
                   </button>
                 </p>
               ) : (
                 <label className="check-row span-2">
                   <input type="checkbox" checked={draft.trustSshHost} onChange={(event) => patch({ trustSshHost: event.target.checked })} />
-                  Confiar en la clave de este servidor
+                  {t("home.form.trustHost")}
                 </label>
               )}
             </div>
@@ -711,16 +710,16 @@ function DetailsStep({
       {testNote ? <p className={testNote.ok ? "test-note ok" : "test-note bad"}>{testNote.text}</p> : null}
       <div className="modal-footer">
         <button type="button" className="secondary-button test-button" disabled={busy || testing} onClick={runTest}>
-          {testing ? "Probando…" : "Probar"}
+          {testing ? t("home.form.testing") : t("home.form.test")}
         </button>
         <button type="button" className="secondary-button" disabled={busy} onClick={onClose}>
-          Cancelar
+          {t("home.cancel")}
         </button>
         <button type="button" className="secondary-button" disabled={busy} onClick={() => void onSave(draft, false)}>
-          Guardar
+          {t("home.form.save")}
         </button>
         <button type="submit" className="primary-button" disabled={busy}>
-          <Check size={16} /> Conectar
+          <Check size={16} /> {t("home.form.connect")}
         </button>
       </div>
     </form>
@@ -748,24 +747,24 @@ function GroupModal({
       >
         <div className="modal-topline">
           <div>
-            <span className="modal-kicker">Organización</span>
-            <h2>Nuevo grupo</h2>
+            <span className="modal-kicker">{t("home.group.kicker")}</span>
+            <h2>{t("home.newGroup")}</h2>
           </div>
-          <button type="button" className="close-button" onClick={onClose} aria-label="Cerrar">
+          <button type="button" className="close-button" onClick={onClose} aria-label={t("home.close")}>
             <X size={18} />
           </button>
         </div>
-        <p className="modal-description">Agrupa tus conexiones para encontrarlas más rápido.</p>
+        <p className="modal-description">{t("home.group.description")}</p>
         <label>
-          Nombre del grupo
-          <input autoFocus value={name} placeholder="Ej. Trabajo" onChange={(event) => setName(event.target.value)} />
+          {t("home.group.name")}
+          <input autoFocus value={name} placeholder={t("home.group.placeholder")} onChange={(event) => setName(event.target.value)} />
         </label>
         <div className="modal-footer">
           <button type="button" className="secondary-button" onClick={onClose}>
-            Cancelar
+            {t("home.cancel")}
           </button>
           <button type="submit" className="primary-button" disabled={busy || !name.trim()}>
-            Crear grupo
+            {t("home.group.create")}
           </button>
         </div>
       </form>

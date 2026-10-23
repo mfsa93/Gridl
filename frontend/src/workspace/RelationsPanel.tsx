@@ -10,6 +10,7 @@ import {
   refLabel,
   type FkAction,
 } from "./relations";
+import { t } from "../lib/i18n";
 
 type Draft = {
   column: string;
@@ -93,22 +94,22 @@ export function RelationsPanel({
   return (
     <section className="relations-panel">
       <div className="relations-title">
-        <span>Relaciones</span>
-        {engine === "sqlite" && editable ? <small>SQLite solo permite definirlas al crear la tabla.</small> : null}
+        <span>{t("relationsPanel.title")}</span>
+        {engine === "sqlite" && editable ? <small>{t("relationsPanel.sqliteNote")}</small> : null}
       </div>
       <div className="relation-group">
         <div className="relation-head">
-          <span>Columnas</span>
-          <span>Referencia</span>
-          <span>Al borrar</span>
-          <span>Al actualizar</span>
+          <span>{t("relationsPanel.columns")}</span>
+          <span>{t("dialog.reference")}</span>
+          <span>{t("dialog.onDelete")}</span>
+          <span>{t("dialog.onUpdate")}</span>
           <span />
         </div>
-        {outgoing.length === 0 && !draft ? <div className="relation-empty">Esta tabla no referencia a otras.</div> : null}
+        {outgoing.length === 0 && !draft ? <div className="relation-empty">{t("relationsPanel.empty")}</div> : null}
         {outgoing.map((key) => (
           <div className="relation-row" key={key.name}>
             <span className="mono">{key.columns.join(", ")}</span>
-            <button type="button" className="relation-link" title={`Abrir ${key.refTable}`} onClick={() => onOpenTable(key.refSchema, key.refTable)}>
+            <button type="button" className="relation-link" title={t("relationsPanel.open", { table: key.refTable })} onClick={() => onOpenTable(key.refSchema, key.refTable)}>
               {refLabel(key, tables)} <ArrowUpRight size={12} />
             </button>
             <span>{key.onDelete}</span>
@@ -116,7 +117,7 @@ export function RelationsPanel({
             <button
               type="button"
               className="tiny-icon"
-              aria-label={`Quitar ${key.name}`}
+              aria-label={t("relationsPanel.remove", { name: key.name })}
               title={key.name}
               disabled={!canAlter || busy}
               onClick={() => onApply([dropForeignKeySql(engine, table, key.name)])}
@@ -127,7 +128,7 @@ export function RelationsPanel({
         ))}
         {draft ? (
           <div className="relation-row relation-draft">
-            <select value={draft.column} aria-label="Columna" onChange={(event) => setDraft({ ...draft, column: event.target.value })}>
+            <select value={draft.column} aria-label={t("relationsPanel.column")} onChange={(event) => setDraft({ ...draft, column: event.target.value })}>
               {table.columns.map((column) => (
                 <option key={column.name} value={column.name}>{column.name}</option>
               ))}
@@ -135,7 +136,7 @@ export function RelationsPanel({
             <div className="relation-target">
               <select
                 value={draft.target}
-                aria-label="Tabla referenciada"
+                aria-label={t("relationsPanel.referencedTable")}
                 onChange={(event) => {
                   const next = targets.find((item) => tableKey(item) === event.target.value);
                   setDraft({ ...draft, target: event.target.value, refColumn: firstKey(next) });
@@ -145,16 +146,16 @@ export function RelationsPanel({
                   <option key={tableKey(item)} value={tableKey(item)}>{tableLabel(item, table)}</option>
                 ))}
               </select>
-              <select value={draft.refColumn} aria-label="Columna referenciada" onChange={(event) => setDraft({ ...draft, refColumn: event.target.value })}>
+              <select value={draft.refColumn} aria-label={t("relationsPanel.referencedColumn")} onChange={(event) => setDraft({ ...draft, refColumn: event.target.value })}>
                 {(target?.columns ?? []).map((column) => (
                   <option key={column.name} value={column.name}>{column.name}{column.primaryKey ? " (pk)" : ""}</option>
                 ))}
               </select>
             </div>
-            <select value={draft.onDelete} aria-label="Al borrar" onChange={(event) => setDraft({ ...draft, onDelete: event.target.value as FkAction })}>
+            <select value={draft.onDelete} aria-label={t("dialog.onDelete")} onChange={(event) => setDraft({ ...draft, onDelete: event.target.value as FkAction })}>
               {fkActions.map((action) => <option key={action} value={action}>{action}</option>)}
             </select>
-            <select value={draft.onUpdate} aria-label="Al actualizar" onChange={(event) => setDraft({ ...draft, onUpdate: event.target.value as FkAction })}>
+            <select value={draft.onUpdate} aria-label={t("dialog.onUpdate")} onChange={(event) => setDraft({ ...draft, onUpdate: event.target.value as FkAction })}>
               {fkActions.map((action) => <option key={action} value={action}>{action}</option>)}
             </select>
             <span />
@@ -164,11 +165,11 @@ export function RelationsPanel({
       <div className="group-actions">
         {draft ? (
           <>
-            <button type="button" className="toolbar-button" onClick={() => setDraft(null)}>Cancelar</button>
-            <button type="button" className="run-button" disabled={busy || !target} onClick={submit}>Agregar relación</button>
+            <button type="button" className="toolbar-button" onClick={() => setDraft(null)}>{t("dialog.cancel")}</button>
+            <button type="button" className="run-button" disabled={busy || !target} onClick={submit}>{t("relationsPanel.add")}</button>
           </>
         ) : (
-          <button type="button" className="tiny-icon" aria-label="Agregar relación" title="Agregar relación" disabled={!canAlter || busy || targets.length === 0} onClick={startDraft}>
+          <button type="button" className="tiny-icon" aria-label={t("relationsPanel.add")} title={t("relationsPanel.add")} disabled={!canAlter || busy || targets.length === 0} onClick={startDraft}>
             <Plus size={14} />
           </button>
         )}
@@ -176,10 +177,10 @@ export function RelationsPanel({
       </div>
 
       <div className="relations-title">
-        <span>Referenciada por</span>
+        <span>{t("relationsPanel.referencedBy")}</span>
       </div>
       {incoming.length === 0 ? (
-        <div className="relation-empty plain">Ninguna tabla apunta a esta.</div>
+        <div className="relation-empty plain">{t("relationsPanel.noIncoming")}</div>
       ) : (
         <div className="relation-group">
           {incoming.map((key) => (
@@ -187,8 +188,8 @@ export function RelationsPanel({
               <button type="button" className="relation-link" onClick={() => onOpenTable(key.schema, key.table)}>
                 {key.schema && key.schema !== table.schema ? `${key.schema}.${key.table}` : key.table} <ArrowUpRight size={12} />
               </button>
-              <span className="mono">por {key.columns.join(", ")}</span>
-              <span>{key.onDelete === "NO ACTION" ? "" : `al borrar ${key.onDelete.toLowerCase()}`}</span>
+              <span className="mono">{t("relationsPanel.via", { columns: key.columns.join(", ") })}</span>
+              <span>{key.onDelete === "NO ACTION" ? "" : t("relationsPanel.incomingOnDelete", { action: key.onDelete.toLowerCase() })}</span>
             </div>
           ))}
         </div>

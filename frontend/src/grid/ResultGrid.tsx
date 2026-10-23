@@ -17,6 +17,7 @@ import { sqlLiteral, toTsv } from "../workspace/export";
 import { useColorScheme, type ColorScheme } from "../lib/appearance";
 import { ContextMenu } from "../workspace/panels";
 import { canonicalTemporal, formatTemporalPick, isBooleanColumn, isTemporalColumn, temporalInputType, temporalLabel } from "../workspace/changes";
+import { t } from "../lib/i18n";
 
 const GRID_FONT = '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif';
 
@@ -317,8 +318,8 @@ function TemporalMenu({
         </button>
       ))}
       <div className="temporal-sep" />
-      <button type="button" role="menuitem" onClick={openPicker}>Selector de fecha…</button>
-      <button type="button" role="menuitem" onClick={() => setManual(true)}>Entrada manual…</button>
+      <button type="button" role="menuitem" onClick={openPicker}>{t("grid.datePicker")}</button>
+      <button type="button" role="menuitem" onClick={() => setManual(true)}>{t("grid.manualEntry")}</button>
       <input
         ref={pickerRef}
         type={inputType}
@@ -372,7 +373,7 @@ function ChoiceMenu({
           highlight
           autoFocus
           altNewline
-          placeholder="valor"
+          placeholder={t("grid.valuePlaceholder")}
           value={current ? "" : value.data}
           onChange={(event) => onChange({ ...value, data: event.target.value })}
         />
@@ -402,7 +403,7 @@ function ChoiceMenu({
         </button>
       ))}
       <div className="temporal-sep" />
-      <button type="button" role="menuitem" onClick={() => setManual(true)}>Entrada manual…</button>
+      <button type="button" role="menuitem" onClick={() => setManual(true)}>{t("grid.manualEntry")}</button>
     </div>
   );
 }
@@ -847,10 +848,10 @@ export function ResultGrid({
           y={headerMenu.y}
           onClose={() => setHeaderMenu(null)}
           items={[
-            { label: "Ajustar esta columna al contenido", run: () => refit(headerMenu.column) },
-            { label: "Ajustar todas las columnas", run: () => refit() },
+            { label: t("grid.fitColumn"), run: () => refit(headerMenu.column) },
+            { label: t("grid.fitAllColumns"), run: () => refit() },
             ...(onSort && columns[headerMenu.column]
-              ? ["separator" as const, { label: "Ordenar por esta columna", run: () => onSort(columns[headerMenu.column]?.name ?? "") }]
+              ? ["separator" as const, { label: t("grid.sortByColumn"), run: () => onSort(columns[headerMenu.column]?.name ?? "") }]
               : []),
           ]}
         />
