@@ -1327,3 +1327,22 @@ select {
 .card-connecting-text small { overflow: hidden; color: var(--label-3); font-size: 11px; text-overflow: ellipsis; }
 .connecting-spinner { flex: none; width: 16px; height: 16px; border: 2px solid var(--fill-strong); border-top-color: var(--accent); border-radius: 50%; animation: connecting-spin 0.8s linear infinite; }
 @keyframes connecting-spin { to { transform: rotate(360deg); } }
+
+/* Schema picker above the explorer tree */
+.schema-bar { display: flex; align-items: center; gap: 2px; margin: 0 10px 6px; }
+.schema-bar > .tiny-icon svg { color: var(--label-2); }
+.schema-picker-anchor { position: relative; flex: 1; min-width: 0; }
+.schema-picker-button { display: flex; align-items: center; gap: 6px; width: 100%; height: 26px; padding: 0 8px; border-radius: 6px; color: var(--label); background: var(--fill); font-size: 12px; font-weight: 500; text-align: left; }
+.schema-picker-button:hover { background: var(--fill-strong); }
+.schema-picker-button span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.schema-picker-button svg { flex: none; color: var(--label-2); }
+.schema-picker-menu { position: absolute; top: calc(100% + 4px); left: 0; z-index: 25; width: max(100%, 220px); padding: 5px; border-radius: 8px; background: var(--elevated); box-shadow: var(--shadow-popover); -webkit-backdrop-filter: blur(30px) saturate(1.6); backdrop-filter: blur(30px) saturate(1.6); animation: fade-in 0.1s ease-out; }
+.schema-picker-search { margin: 0 0 5px; }
+.schema-picker-list { max-height: min(360px, 60vh); overflow-y: auto; }
+.schema-picker-menu button { display: flex; align-items: center; gap: 6px; width: 100%; padding: 4px 8px; border-radius: 4px; color: var(--label); background: transparent; font-size: 13px; line-height: 18px; text-align: left; }
+.schema-picker-menu button span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.schema-picker-menu button small { color: var(--label-3); font-size: 11px; font-variant-numeric: tabular-nums; }
+.schema-picker-menu button:hover { color: #fff; background: var(--accent); }
+.schema-picker-menu button:hover small, .schema-picker-menu button:hover svg { color: #fff; }
+.schema-picker-menu .invisible { visibility: hidden; }
+.schema-picker-empty { padding: 6px 8px; color: var(--label-2); font-size: 12px; }
