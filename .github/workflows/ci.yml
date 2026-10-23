@@ -1,8 +1,15 @@
 name: CI
 
+# Checks only: builds and tests, never packages. Releases come from release.yml on v* tags.
 on:
-  push:
   pull_request:
+  push:
+    branches: [master, develop]
+
+# A newer push to the same branch or PR cancels the run still in progress.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   core:

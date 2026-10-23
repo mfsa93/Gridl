@@ -1,0 +1,55 @@
+name: Build
+
+# Packages any branch on demand, without publishing a release or touching updates.
+# Run it from the Actions tab ("Run workflow") or with:
+#   gh workflow run build.yml --ref <branch> -f target=aarch64-apple-darwin
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Architecture
+        type: choice
+        default: aarch64-apple-darwin
+        options:
+          - aarch64-apple-darwin
+          - x86_64-apple-darwin
+          - universal-apple-darwin
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos:
+    name: macOS (${{ inputs.target }})
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.9.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          targets: ${{ inputs.target == 'universal-apple-darwin' && 'aarch64-apple-darwin,x86_64-apple-darwin' || inputs.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: build-${{ inputs.target }}
+      - run: pnpm install --frozen-lockfile
+      # Test builds skip the signed update bundle, so they need no release key.
+      - name: Package
+        working-directory: crates/gridl-desktop
+        run: >
+          ../../frontend/node_modules/.bin/tauri build
+          --target ${{ inputs.target }}
+          --bundles dmg
+          --config '{"bundle":{"createUpdaterArtifacts":false}}'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Gridl-${{ github.ref_name }}-${{ inputs.target }}-${{ github.sha }}
+          path: target/${{ inputs.target }}/release/bundle/dmg/*.dmg
+          retention-days: 7
+          if-no-files-found: error
