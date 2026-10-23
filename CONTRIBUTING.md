@@ -1,29 +1,29 @@
-# Contribuir a Gridl
+# Contributing to Gridl
 
-El núcleo de datos vive en `crates/gridl-core` y no depende de Tauri. El shell de escritorio, en `crates/gridl-desktop`, solo adapta IPC y el llavero del sistema. Un motor nuevo implementa el trait `DatabaseDriver`.
+The data core lives in `crates/gridl-core` and does not depend on Tauri. The desktop shell in `crates/gridl-desktop` adapts IPC, windows, and the system keychain. A new engine implements the `DatabaseDriver` trait.
 
-## Ramas
+## Branches
 
-- `master`: versión estable. De aquí salen las releases. Solo acepta pull requests desde `develop` (o un `hotfix/…` urgente), con la CI en verde.
-- `develop`: integración y pruebas. Las ramas de trabajo se unen aquí por pull request.
-- Ramas de trabajo, siempre desde `develop`: `feat/…` para funciones, `fix/…` para errores, `chore/…` para mantenimiento, `docs/…` para documentación.
+- `master`: stable. Releases are cut from here. It only accepts pull requests from `develop` (or an urgent `hotfix/…`), with CI passing.
+- `develop`: integration and testing. Work branches are merged here through pull requests.
+- Work branches, always from `develop`: `feat/…` for features, `fix/…` for bugs, `chore/…` for maintenance, `docs/…` for documentation.
 
 ```bash
 git switch develop && git pull
-git switch -c feat/importar-excel
+git switch -c feat/excel-import
 # … commits …
-git push -u origin feat/importar-excel
+git push -u origin feat/excel-import
 gh pr create --base develop
 ```
 
-Nadie hace push directo a `master` ni a `develop`, y ninguna de las dos se puede borrar ni reescribir.
+Nobody pushes directly to `master` or `develop`, and neither can be deleted or rewritten.
 
-## Publicar
+## Releasing
 
-1. Abre un PR de `develop` a `master` con el número de versión ya subido (ver [Publicar una versión](README.md#publicar-una-versión)).
-2. Cuando la CI pasa y se une, crea la etiqueta `vX.Y.Z` sobre `master`. Solo los administradores pueden crear etiquetas `v*`.
+1. Open a PR from `develop` to `master` with the version already bumped (see [Releasing](README.md#releasing)).
+2. Once CI passes and it is merged, create the `vX.Y.Z` tag on `master`. Only administrators can create `v*` tags.
 
-## Antes de abrir un pull request
+## Before opening a pull request
 
 ```bash
 pnpm install
@@ -31,8 +31,10 @@ cargo fmt --all
 pnpm check
 ```
 
-`pnpm check` corre formato, clippy, las pruebas de Rust, lint, las pruebas del frontend (Vitest) y TypeScript. Para las pruebas contra PostgreSQL y MySQL reales, mira la sección [Pruebas](README.md#pruebas) del README.
+`pnpm check` runs formatting, clippy, the Rust tests, lint, the frontend tests (Vitest), and TypeScript. For the tests against real PostgreSQL and MySQL servers, see [Tests](README.md#tests) in the README.
 
-Las reglas de seguridad por ambiente (`crates/gridl-core/src/guard.rs`) se aplican en el backend. Cualquier comando nuevo que ejecute SQL del usuario tiene que pasar por `guard()` en `crates/gridl-desktop/src/commands.rs`.
+The per-environment safety rules (`crates/gridl-core/src/guard.rs`) are enforced in the backend. Any new command that runs user SQL must go through `guard()` in `crates/gridl-desktop/src/commands.rs`.
 
-No guardes contraseñas en `ConnectionConfig`, en logs ni en el JSON de perfiles. El secreto entra al llavero del sistema o vive en memoria solo durante la sesión.
+Never store passwords in `ConnectionConfig`, in logs, or in the profiles JSON. Secrets go into the system keychain or live in memory only for the session.
+
+The app's interface text is in Spanish; documentation and code comments are in English.

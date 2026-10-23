@@ -1,13 +1,13 @@
-# Seguridad
+# Security
 
-Gridl maneja credenciales y datos de bases de datos, así que tomamos en serio cualquier fallo de seguridad.
+Gridl handles credentials and database data, so we take security issues seriously.
 
-## Reportar una vulnerabilidad
+## Reporting a vulnerability
 
-No abras un issue público. Usa [Report a vulnerability](https://github.com/mfsa93/Gridl/security/advisories/new) en la pestaña Security del repositorio. Incluye qué versión usas, cómo reproducirlo y qué impacto tiene.
+Do not open a public issue. Use [Report a vulnerability](https://github.com/mfsa93/Gridl/security/advisories/new) in the repository's Security tab. Include the version you use, how to reproduce it, and its impact.
 
-Responderemos lo antes posible y publicaremos la corrección como una versión nueva; la app la ofrecerá sola.
+We will answer as soon as possible and publish the fix as a new version, which the app offers automatically.
 
-## Versiones con soporte
+## Supported versions
 
-Solo la última versión publicada recibe correcciones.
+Only the latest published version receives fixes.

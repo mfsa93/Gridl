@@ -1,31 +1,31 @@
-name: Error
-description: Algo no funciona como debería
+name: Bug report
+description: Something does not work as it should
 labels: [bug]
 body:
   - type: textarea
     id: what
     attributes:
-      label: Qué pasó
-      description: Qué hiciste, qué esperabas y qué viste. Una captura ayuda mucho.
+      label: What happened
+      description: What you did, what you expected, and what you saw. A screenshot helps a lot.
     validations:
       required: true
   - type: input
     id: version
     attributes:
-      label: Versión de Gridl
-      description: Gridl → Acerca de Gridl
+      label: Gridl version
+      description: Gridl → Acerca de Gridl (About Gridl)
       placeholder: "0.2.0"
     validations:
       required: true
   - type: dropdown
     id: engine
     attributes:
-      label: Motor
-      options: [PostgreSQL, MySQL / MariaDB, SQLite, No aplica]
+      label: Engine
+      options: [PostgreSQL, MySQL / MariaDB, SQLite, Not applicable]
     validations:
       required: true
   - type: input
     id: macos
     attributes:
-      label: Versión de macOS
+      label: macOS version
       placeholder: "15.4"

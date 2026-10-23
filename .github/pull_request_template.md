@@ -1,13 +1,13 @@
-## Qué cambia
+## What changes
 
-<!-- Una o dos frases: qué hace este PR y por qué. -->
+<!-- One or two sentences: what this PR does and why. -->
 
-## Cómo probarlo
+## How to test it
 
-<!-- Pasos para comprobarlo en la app, o las pruebas que lo cubren. -->
+<!-- Steps to check it in the app, or the tests that cover it. -->
 
 ## Checklist
 
-- [ ] `pnpm check` pasa en local
-- [ ] Si toca SQL del usuario, pasa por `guard()` (política de seguridad)
-- [ ] Si cambia algo visible, el README está al día
+- [ ] `pnpm check` passes locally
+- [ ] If it runs user SQL, it goes through `guard()` (safety policy)
+- [ ] If it changes something visible, the README is up to date

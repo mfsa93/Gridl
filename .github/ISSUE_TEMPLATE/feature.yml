@@ -1,15 +1,15 @@
-name: Propuesta
-description: Una idea o una función que te falta
+name: Feature request
+description: An idea or a feature you are missing
 labels: [enhancement]
 body:
   - type: textarea
     id: problem
     attributes:
-      label: Qué necesitas hacer
-      description: El problema o la tarea, antes que la solución.
+      label: What you need to do
+      description: The problem or the task, before the solution.
     validations:
       required: true
   - type: textarea
     id: idea
     attributes:
-      label: Cómo lo imaginas
+      label: How you picture it

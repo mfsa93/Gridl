@@ -38,7 +38,7 @@ jobs:
           args: --target universal-apple-darwin
           tagName: ${{ github.ref_name }}
           releaseName: Gridl ${{ github.ref_name }}
-          releaseBody: Descarga el .dmg para instalar. Si ya tienes Gridl, se actualiza solo.
+          releaseBody: Download the .dmg to install, or run the one-line installer from the README. Installed copies update themselves.
           releaseDraft: false
           prerelease: false
           includeUpdaterJson: true

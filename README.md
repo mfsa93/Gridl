@@ -1,202 +1,204 @@
 # Gridl
 
-Cliente de bases de datos de escritorio, gratuito y open source, con el estilo de una app de macOS. Trabaja con **PostgreSQL**, **MySQL / MariaDB** y **SQLite**. La interfaz corre en Tauri 2 y el motor de datos es una crate de Rust independiente, sin Electron: la app pesa unos 20 MB y consume una fracción de la memoria de los clientes basados en Electron o Java.
+A free, open source desktop database client that looks and feels like a macOS app. It works with **PostgreSQL**, **MySQL / MariaDB**, and **SQLite**. The UI runs on Tauri 2 and the data engine is a standalone Rust crate, with no Electron: the app weighs about 20 MB and uses a fraction of the memory of Electron or Java based clients.
 
-- [Instalar](#instalar)
-- [Primeros pasos](#primeros-pasos)
-- [Funciones](#funciones)
-- [Seguridad por ambiente](#seguridad-por-ambiente)
-- [Atajos de teclado](#atajos-de-teclado)
-- [Dónde guarda sus datos](#dónde-guarda-sus-datos)
-- [Desarrollo](#desarrollo)
-- [Publicar una versión](#publicar-una-versión)
-- [Arquitectura](#arquitectura)
+The app's interface is currently in Spanish.
 
-## Instalar
+- [Install](#install)
+- [Getting started](#getting-started)
+- [Features](#features)
+- [Per-environment safety](#per-environment-safety)
+- [Keyboard shortcuts](#keyboard-shortcuts)
+- [Where data is stored](#where-data-is-stored)
+- [Development](#development)
+- [Releasing](#releasing)
+- [Architecture](#architecture)
 
-### macOS (recomendado)
+## Install
 
-Pega esto en Terminal:
+### macOS (recommended)
+
+Paste this into Terminal:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/mfsa93/Gridl/master/install.sh | sh
 ```
 
-El script busca la última versión en las [releases de GitHub](https://github.com/mfsa93/Gridl/releases), descarga el `.dmg`, copia Gridl a Aplicaciones y lo abre. La app es universal: funciona en Mac con Apple Silicon y con Intel.
+The script finds the latest version in the [GitHub releases](https://github.com/mfsa93/Gridl/releases), downloads the `.dmg`, copies Gridl to Applications, and opens it. The app is universal: it runs on Apple Silicon and Intel Macs.
 
-Opciones:
+Options:
 
-| Variable | Qué hace |
+| Variable | Effect |
 |---|---|
-| `GRIDL_TARGET=~/Applications` | Instala en tu carpeta personal, sin pedir contraseña de administrador. |
-| `GRIDL_VERSION=v0.2.0` | Instala una versión concreta en lugar de la última. |
-| `GRIDL_NO_OPEN=1` | No abre Gridl al terminar. |
+| `GRIDL_TARGET=~/Applications` | Installs into your home folder, without an administrator password. |
+| `GRIDL_VERSION=v0.2.0` | Installs a specific version instead of the latest. |
+| `GRIDL_NO_OPEN=1` | Does not open Gridl when done. |
 
-Ejemplo: `curl -fsSL https://raw.githubusercontent.com/mfsa93/Gridl/master/install.sh | GRIDL_TARGET=~/Applications sh`
+Example: `curl -fsSL https://raw.githubusercontent.com/mfsa93/Gridl/master/install.sh | GRIDL_TARGET=~/Applications sh`
 
-### macOS, a mano
+### macOS, by hand
 
-1. Descarga `Gridl_X.Y.Z_universal.dmg` desde las [releases](https://github.com/mfsa93/Gridl/releases).
-2. Ábrelo y arrastra Gridl a Aplicaciones.
-3. Gridl no está firmado por Apple, así que la primera vez macOS lo bloquea:
-   - **macOS 15 (Sequoia) o posterior:** abre Gridl, cierra el aviso, ve a **Ajustes del Sistema → Privacidad y seguridad** y pulsa **Abrir igualmente** junto a Gridl.
-   - **macOS 14 o anterior:** clic derecho sobre Gridl → **Abrir** → **Abrir**.
-   - O desde Terminal: `xattr -dr com.apple.quarantine /Applications/Gridl.app`
+1. Download `Gridl_X.Y.Z_universal.dmg` from the [releases](https://github.com/mfsa93/Gridl/releases).
+2. Open it and drag Gridl to Applications.
+3. Gridl is not signed by Apple, so macOS blocks it the first time:
+   - **macOS 15 (Sequoia) or later:** open Gridl, dismiss the warning, go to **System Settings → Privacy & Security**, and click **Open Anyway** next to Gridl.
+   - **macOS 14 or earlier:** right-click Gridl → **Open** → **Open**.
+   - Or from Terminal: `xattr -dr com.apple.quarantine /Applications/Gridl.app`
 
-El instalador por Terminal evita este paso porque los archivos que descarga `curl` no quedan marcados por macOS.
+The Terminal installer avoids this step because files downloaded with `curl` are not flagged by macOS.
 
-### Actualizaciones
+### Updates
 
-Gridl revisa al abrirse si hay una versión nueva, y también desde **Gridl → Buscar actualizaciones…**. Si la hay, muestra las novedades y la instala con **Instalar y reiniciar**. Cada actualización viene firmada y la app rechaza cualquier archivo sin una firma válida. Si tienes cambios sin guardar, te avisa antes de reiniciar.
+Gridl checks for a new version when it starts, and from **Gridl → Buscar actualizaciones…** (Check for Updates). When there is one, it shows the release notes and installs it with **Instalar y reiniciar** (Install and Restart). Every update is signed, and the app rejects any file without a valid signature. If you have unsaved changes, it asks before restarting.
 
-Volver a ejecutar el script de instalación también actualiza a la última versión.
+Running the install script again also updates to the latest version.
 
-### Herramientas opcionales
+### Optional tools
 
-El menú **Respaldo** usa las herramientas de línea de comandos de cada motor. Para PostgreSQL y MySQL instálalas con:
+The **Respaldo** (Backup) menu uses each engine's command line tools. For PostgreSQL and MySQL, install them with:
 
 ```bash
 brew install libpq mysql-client
 ```
 
-SQLite no necesita nada extra.
+SQLite needs nothing extra.
 
-### Desinstalar
+### Uninstall
 
-Borra `/Applications/Gridl.app`. Las conexiones guardadas están en `~/Library/Application Support/app.gridl.desktop/` y las contraseñas en el Llavero de macOS, con el nombre `app.gridl.desktop`.
+Delete `/Applications/Gridl.app`. Saved connections live in `~/Library/Application Support/app.gridl.desktop/` and passwords in the macOS Keychain, under `app.gridl.desktop`.
 
-## Primeros pasos
+## Getting started
 
-1. Pulsa **Nueva conexión** (⌘N), elige el motor y completa host, puerto, base de datos y usuario. Para SQLite basta con elegir el archivo.
-2. Si quieres, marca **Guardar contraseña en el llavero**. La contraseña nunca se escribe en el archivo de conexiones.
-3. En **SSL** y **Túnel** configuras TLS con certificados o un túnel SSH con llave o contraseña.
-4. Al final de **General** eliges el **ambiente** (Local, Desarrollo, Staging o Producción) y, en **Reglas de seguridad**, qué puede hacer esa conexión. Ver [Seguridad por ambiente](#seguridad-por-ambiente).
-5. **Probar** verifica la conexión sin guardarla; **Conectar** la guarda y la abre.
+1. Click **Nueva conexión** (New Connection, ⌘N), pick the engine, and fill in host, port, database, and user. For SQLite, just choose the file.
+2. Optionally check **Guardar contraseña en el llavero** (save password in the Keychain). The password is never written to the connections file.
+3. The **SSL** and **Túnel** tabs configure TLS with certificates or an SSH tunnel with a key or password.
+4. At the bottom of **General**, pick the **environment** (Local, Development, Staging, or Production) and, under **Reglas de seguridad**, what that connection is allowed to do. See [Per-environment safety](#per-environment-safety).
+5. **Probar** (Test) checks the connection without saving it; **Conectar** (Connect) saves and opens it.
 
-Con clic derecho sobre una conexión puedes editarla, duplicarla, quitarla o abrirla en una ventana nueva (también con ⌘clic). Cada ventana tiene su propia conexión.
+Right-click a connection to edit, duplicate, remove, or open it in a new window (⌘-click does the same). Each window has its own connection.
 
-## Funciones
+## Features
 
-**Editor SQL**
-- Autocompletado de tablas y columnas, y resaltado de sintaxis para cada motor.
-- Errores subrayados mientras escribes: cada sentencia se prepara en el servidor, sin ejecutarse, y se marca donde está el problema.
-- Ejecuta la sentencia del cursor (⌘↵) o el script completo (⇧⌘↵), formatea (⌘I) y cancela una consulta en curso de verdad, en el servidor.
-- Historial de consultas con búsqueda y favoritas.
-- Los resultados muestran hasta 10.000 filas; si hay más, **Cargar hasta 100.000 filas** trae el resto bajo demanda.
-- Las transacciones funcionan como en una terminal: `BEGIN`, `SET` y las tablas temporales se mantienen entre consultas.
+**SQL editor**
+- Table and column autocompletion, and syntax highlighting for each engine.
+- Errors underlined as you type: each statement is prepared on the server, without running, and the problem is marked where it is.
+- Run the statement under the cursor (⌘↵) or the whole script (⇧⌘↵), format (⌘I), and truly cancel a running query on the server.
+- Query history with search and favorites.
+- Results show up to 10,000 rows; when there are more, **Cargar hasta 100.000 filas** fetches the rest on demand.
+- Transactions behave as in a terminal: `BEGIN`, `SET`, and temporary tables persist across queries.
 
-**Tablas**
-- Paginación, filtros por columna (incluido SQL libre) y orden con clic en la cabecera.
-- Las columnas se ajustan solas al contenido; clic derecho en la cabecera para reajustarlas.
-- Panel **Fila** con todos los valores y el JSON formateado.
-- Clic derecho en una celda: abrir la fila relacionada por clave foránea, copiar, copiar como `INSERT`, filtrar por ese valor, poner NULL o eliminar.
-- Selecciona celdas o filas (clic en el número de fila) para copiar (⌘C), pegar (⌘V) o borrar (⌫).
+**Tables**
+- Paging, per-column filters (including free SQL), and sorting by clicking a header.
+- Columns fit their content automatically; right-click a header to refit them.
+- A **Fila** (Row) panel with every value and formatted JSON.
+- Right-click a cell: open the related row through a foreign key, copy, copy as `INSERT`, filter by that value, set NULL, or delete.
+- Select cells or rows (click the row number) to copy (⌘C), paste (⌘V), or delete (⌫).
 
-**Editar datos**
-- Edita celdas, agrega filas, pega desde Excel o Numbers y marca filas para borrar.
-- Nada se escribe hasta que pulsas **Guardar** (⌘S). **SQL** muestra antes las sentencias exactas.
-- Todo se aplica en **una sola transacción**: si una fila falla, no se guarda ninguna.
-- Los cambios se conservan al cambiar de página, filtrar u ordenar, y se guardan todos juntos. Gridl te avisa antes de salir de la conexión, cerrar una pestaña o cerrar la app si hay algo sin guardar.
+**Editing data**
+- Edit cells, add rows, paste from Excel or Numbers, and mark rows for deletion.
+- Nothing is written until you click **Guardar** (Save, ⌘S). **SQL** shows the exact statements first.
+- Everything is applied in **a single transaction**: if one row fails, none is saved.
+- Changes survive page changes, filtering, and sorting, and are saved together. Gridl warns before you leave the connection, close a tab, or quit with anything unsaved.
 
-**Estructura**
-- Agrega, renombra, cambia o quita columnas.
-- Relaciones (claves foráneas): verlas, crearlas, quitarlas y saltar a la tabla relacionada.
-- **Nueva tabla** con tipo, tamaño, valor predeterminado, clave primaria (también compuesta), no nulo, única y referencia, con vista previa del `CREATE TABLE`.
+**Structure**
+- Add, rename, change, or drop columns.
+- Relations (foreign keys): view, create, and drop them, and jump to the related table.
+- **Nueva tabla** (New Table) with type, size, default, primary key (composite too), not null, unique, and references, with a live `CREATE TABLE` preview.
 
-**Datos de entrada y salida**
-- Exporta a CSV, JSON o `INSERT` SQL. En una tabla se exportan todas las filas que cumplen el filtro, directo al archivo y sin cargarlas en memoria.
-- Importa CSV con detección del separador, asociación de columnas por nombre y vista previa. Todo entra en una transacción.
-- Respalda la base (`pg_dump`, `mysqldump` o una copia del archivo SQLite) y restaura un respaldo.
+**Data in and out**
+- Export to CSV, JSON, or SQL `INSERT`s. For a table, every row matching the filter is exported, straight to the file without loading it into memory.
+- Import CSV with delimiter detection, column matching by name, and a preview. Everything goes in one transaction.
+- Back up the database (`pg_dump`, `mysqldump`, or a copy of the SQLite file) and restore a backup.
 
-**Conexiones**
-- TLS con verificación de certificado, túnel SSH con verificación de la huella del servidor y contraseñas en el llavero del sistema.
-- Modo solo lectura aplicado por el propio servidor, no solo por la interfaz.
-- Si se cae la conexión (suspensión, VPN, túnel), **Reconectar** la recupera.
-- Modo claro y oscuro según la apariencia del sistema.
+**Connections**
+- TLS with certificate verification, an SSH tunnel with server fingerprint verification, and passwords in the system keychain.
+- Read-only mode enforced by the server itself, not just the UI.
+- If the connection drops (sleep, VPN, tunnel), **Reconectar** brings it back.
+- Light and dark mode following the system appearance.
 
-## Seguridad por ambiente
+## Per-environment safety
 
-Cada conexión tiene un ambiente y unas reglas. Al elegir el ambiente se sugieren estas reglas, y puedes cambiarlas:
+Each connection has an environment and a set of rules. Picking the environment suggests these rules, which you can change:
 
-| Ambiente | Modificar datos | Cambiar estructura | Tiempo límite |
+| Environment | Change data | Change structure | Time limit |
 |---|---|---|---|
-| Local / Desarrollo | Permitir | Permitir | Sin límite |
-| Staging | Pedir autorización | Pedir autorización | 60 s |
-| Producción | Bloquear | Bloquear | 30 s |
+| Local / Development | Allow | Allow | None |
+| Staging | Ask | Ask | 60 s |
+| Production | Block | Block | 30 s |
 
-- **Modificar datos**: `INSERT`, `UPDATE`, `DELETE`, `MERGE`, llamadas a procedimientos y cualquier sentencia que Gridl no reconozca.
-- **Cambiar estructura**: `CREATE`, `ALTER`, `DROP`, `TRUNCATE`, `GRANT`, `REVOKE`.
-- **Pedir autorización** muestra la sentencia antes de ejecutarla. En Producción, y para operaciones destructivas, hay que escribir el nombre de la base para confirmar.
-- **Confirmar siempre las operaciones destructivas** (activo por defecto): `DELETE` o `UPDATE` sin `WHERE`, `DROP` y `TRUNCATE` piden confirmación incluso en Local.
-- **Tiempo límite**: la consulta se cancela en el servidor al pasar ese tiempo.
+- **Change data**: `INSERT`, `UPDATE`, `DELETE`, `MERGE`, procedure calls, and any statement Gridl does not recognize.
+- **Change structure**: `CREATE`, `ALTER`, `DROP`, `TRUNCATE`, `GRANT`, `REVOKE`.
+- **Ask** shows the statement before running it. In Production, and for destructive operations, you must type the database name to confirm.
+- **Always confirm destructive operations** (on by default): `DELETE` or `UPDATE` without `WHERE`, `DROP`, and `TRUNCATE` ask for confirmation even locally.
+- **Time limit**: the query is cancelled on the server after that time.
 
-Las reglas se aplican en el backend, antes de que la sentencia llegue a la base, y cubren el editor, la grilla, la estructura, la importación y la restauración. Gridl decide por la forma de la sentencia: no puede saber qué hace una función por dentro (`SELECT borrar_todo()` cuenta como lectura). Para un bloqueo total, activa además **Solo lectura**, que lo hace cumplir el servidor.
+The rules are enforced in the backend, before the statement reaches the database, and cover the editor, the grid, structure changes, imports, and restores. Gridl judges by the statement's shape: it cannot know what a function does inside (`SELECT purge_everything()` counts as a read). For a hard block, also turn on **Solo lectura** (read-only), which the server enforces.
 
-## Atajos de teclado
+## Keyboard shortcuts
 
-| Atajo | Acción |
+| Shortcut | Action |
 |---|---|
-| ⌘↵ | Ejecutar la sentencia del cursor o la selección |
-| ⇧⌘↵ | Ejecutar todo el script |
-| ⌘I | Formatear SQL |
-| ⌘S | Guardar los cambios de la tabla |
-| ⌘Z | Deshacer el último cambio pendiente |
-| ⌘R | Recargar los datos (o el explorador, en el editor SQL) |
-| ⌘C / ⌘V / ⌫ | Copiar, pegar o borrar la selección de la grilla |
-| ⌘N | Nueva conexión |
-| ⇧⌘G | Nuevo grupo |
-| ⌘W | Cerrar la pestaña |
-| ⌘K | Buscar una conexión |
-| ⌘clic en una conexión | Abrirla en una ventana nueva |
+| ⌘↵ | Run the statement under the cursor or the selection |
+| ⇧⌘↵ | Run the whole script |
+| ⌘I | Format SQL |
+| ⌘S | Save the table's changes |
+| ⌘Z | Undo the last pending change |
+| ⌘R | Reload the data (or the explorer, in the SQL editor) |
+| ⌘C / ⌘V / ⌫ | Copy, paste, or delete the grid selection |
+| ⌘N | New connection |
+| ⇧⌘G | New group |
+| ⌘W | Close the tab |
+| ⌘K | Search connections |
+| ⌘-click a connection | Open it in a new window |
 
-## Dónde guarda sus datos
+## Where data is stored
 
-| Qué | Dónde |
+| What | Where |
 |---|---|
-| Conexiones y grupos | `~/Library/Application Support/app.gridl.desktop/connections.json` |
-| Contraseñas | Llavero de macOS, servicio `app.gridl.desktop` |
-| Historial, pestañas abiertas y anchos de paneles | Almacenamiento local de la app, por conexión |
+| Connections and groups | `~/Library/Application Support/app.gridl.desktop/connections.json` |
+| Passwords | macOS Keychain, service `app.gridl.desktop` |
+| History, open tabs, and pane sizes | The app's local storage, per connection |
 
-El archivo de conexiones nunca contiene contraseñas.
+The connections file never contains passwords.
 
-## Desarrollo
+## Development
 
-### Requisitos
+### Requirements
 
-- Rust 1.88 o superior, con `rustfmt` y `clippy` (`rustup component add rustfmt clippy`).
-- Node.js 22 y pnpm 10.
+- Rust 1.88 or later, with `rustfmt` and `clippy` (`rustup component add rustfmt clippy`).
+- Node.js 22 and pnpm 10.
 - macOS: Xcode Command Line Tools.
-- Linux: las dependencias de [Tauri 2](https://v2.tauri.app/start/prerequisites/).
-- Windows: WebView2 y las Build Tools de C++.
-- Docker, si quieres correr las pruebas contra PostgreSQL y MySQL.
+- Linux: the [Tauri 2](https://v2.tauri.app/start/prerequisites/) dependencies.
+- Windows: WebView2 and the C++ Build Tools.
+- Docker, to run the tests against PostgreSQL and MySQL.
 
-### Arrancar
+### Run
 
 ```bash
 git clone https://github.com/mfsa93/Gridl.git gridl
 cd gridl
 pnpm install
-pnpm dev      # la primera compilación de Tauri tarda varios minutos
+pnpm dev      # the first Tauri build takes a few minutes
 ```
 
-`pnpm dev` recompila el backend y recarga la interfaz al guardar. Con Option + clic derecho se abre el inspector web.
+`pnpm dev` rebuilds the backend and reloads the UI on save. Option-right-click opens the web inspector.
 
-### Pruebas
+### Tests
 
 ```bash
-pnpm check    # formato, clippy, pruebas de Rust, lint, pruebas del frontend y TypeScript
+pnpm check    # formatting, clippy, Rust tests, lint, frontend tests, and TypeScript
 ```
 
-Por partes:
+Piece by piece:
 
 ```bash
-cargo test --workspace          # núcleo y shell (SQLite siempre; PG y MySQL si hay servidor)
-pnpm --dir frontend test        # Vitest: SQL generado, filtros, exportación, errores, cambios pendientes
+cargo test --workspace          # core and shell (SQLite always; PG and MySQL when a server is set)
+pnpm --dir frontend test        # Vitest: generated SQL, filters, export, errors, pending edits
 pnpm lint
 pnpm --dir frontend exec tsc --noEmit
 ```
 
-Las pruebas de PostgreSQL y MySQL se saltan si no hay servidor. Para correrlas con servidores desechables:
+The PostgreSQL and MySQL tests are skipped without a server. To run them against throwaway servers:
 
 ```bash
 docker run -d --rm --name gridl-pg-test -e POSTGRES_PASSWORD=gridl -e POSTGRES_DB=gridl -p 35432:5432 postgres:17
@@ -207,88 +209,89 @@ GRIDL_TEST_MYSQL=root:gridl@127.0.0.1:33306/gridl \
 cargo test --workspace
 ```
 
-Las pruebas de respaldo y restauración necesitan además `GRIDL_TEST_BACKUP=1` y `brew install libpq mysql-client`.
+The backup and restore tests also need `GRIDL_TEST_BACKUP=1` and `brew install libpq mysql-client`.
 
-La CI de GitHub (`.github/workflows/ci.yml`) corre todo esto en cada push, con PostgreSQL y MySQL como servicios.
+GitHub CI (`.github/workflows/ci.yml`) runs all of this on every push and pull request, with PostgreSQL and MySQL as services.
 
-### Compilar la app
+### Build the app
 
 ```bash
 pnpm build
 ```
 
-Deja `Gridl.app` y el `.dmg` en `target/release/bundle/`. Para generar los archivos de actualización firmados hace falta la llave privada en `TAURI_SIGNING_PRIVATE_KEY` (ver abajo).
+This leaves `Gridl.app` and the `.dmg` in `target/release/bundle/`. Generating signed update artifacts needs the private key in `TAURI_SIGNING_PRIVATE_KEY` (see below).
 
-## Publicar una versión
+## Releasing
 
-1. Sube el número de versión en `crates/gridl-desktop/tauri.conf.json` (`"version"`) y en `Cargo.toml` (`[workspace.package] version`). Tiene que ser mayor que la publicada.
-2. Haz commit, crea la etiqueta y súbela:
+1. Bump the version in `crates/gridl-desktop/tauri.conf.json` (`"version"`) and `Cargo.toml` (`[workspace.package] version`). It must be higher than the published one.
+2. Merge it into `master` through a pull request from `develop` (see [CONTRIBUTING.md](CONTRIBUTING.md)).
+3. Tag `master` and push the tag:
 
    ```bash
-   git commit -am "Gridl 0.2.1"
+   git switch master && git pull
    git tag -a v0.2.1 -m "Gridl 0.2.1"
-   git push origin master v0.2.1
+   git push origin v0.2.1
    ```
 
-3. El flujo `.github/workflows/release.yml` compila la app universal, la firma y publica la release con el `.dmg`, el paquete de actualización y `latest.json`. Tarda unos 15 minutos.
-4. Las copias instaladas la ofrecen al abrirse o desde **Buscar actualizaciones…**
+4. `.github/workflows/release.yml` builds the universal app, signs it, and publishes the release with the `.dmg`, the update bundle, and `latest.json`. It takes about 15 minutes.
+5. Installed copies offer it on start or from **Check for Updates**.
 
-### Llave de firma de actualizaciones
+### Update signing key
 
-Las actualizaciones se firman con una llave propia (no es la firma de Apple):
+Updates are signed with a project key (this is not Apple's signature):
 
-- La llave pública está en `crates/gridl-desktop/tauri.conf.json` (`plugins.updater.pubkey`).
-- La llave privada vive fuera del repositorio, en `~/.tauri/gridl.key`, y en los secrets del repositorio `TAURI_SIGNING_PRIVATE_KEY` y `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
-- **Guarda una copia de `~/.tauri/gridl.key`.** Si se pierde, las copias instaladas ya no podrán recibir actualizaciones y habrá que reinstalarlas a mano con una llave nueva.
+- The public key is in `crates/gridl-desktop/tauri.conf.json` (`plugins.updater.pubkey`).
+- The private key lives outside the repository, in `~/.tauri/gridl.key`, and in the repository secrets `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
+- **Keep a backup of `~/.tauri/gridl.key`.** If it is lost, installed copies can no longer receive updates and must be reinstalled by hand with a new key.
 
-### Firma de Apple (opcional)
+### Apple signing (optional)
 
-Para que Gridl se abra sin ningún aviso hace falta el Apple Developer Program (99 USD al año), un certificado Developer ID y la notarización. `tauri-action` lo soporta agregando los secrets `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_ID`, `APPLE_PASSWORD` (contraseña de aplicación) y `APPLE_TEAM_ID`.
+Opening Gridl without any warning needs the Apple Developer Program (99 USD a year), a Developer ID certificate, and notarization. `tauri-action` supports it once the secrets `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_ID`, `APPLE_PASSWORD` (an app-specific password), and `APPLE_TEAM_ID` are added.
 
-## Arquitectura
+## Architecture
 
 ```text
 frontend/                  React, CodeMirror 6, Glide Data Grid
         |  invoke + Channel<RowChunk>
-crates/gridl-desktop/      shell Tauri: comandos IPC, ventanas, perfiles, llavero,
-        |                  política de seguridad, exportación, importación y respaldo
+crates/gridl-desktop/      Tauri shell: IPC commands, windows, profiles, keychain,
+        |                  safety policy, export, import, and backup
         |  DatabaseDriver, CredentialVault
-crates/gridl-core/         puertos y drivers (SQLite, PostgreSQL, MySQL/MariaDB)
+crates/gridl-core/         ports and drivers (SQLite, PostgreSQL, MySQL/MariaDB)
 ```
 
-`DatabaseDriver` es el puerto y `SqliteDriver`, `PostgresDriver` y `MysqlDriver` son los adaptadores. El shell no habla SQL: abre una sesión, pide el catálogo y consume bloques de filas. Las contraseñas no forman parte de `ConnectionConfig`; se guardan con el crate `keyring` (Keychain, Credential Manager o Secret Service).
+`DatabaseDriver` is the port; `SqliteDriver`, `PostgresDriver`, and `MysqlDriver` are the adapters. The shell does not speak SQL: it opens a session, asks for the catalog, and consumes row chunks. Passwords are not part of `ConnectionConfig`; they are stored with the `keyring` crate (Keychain, Credential Manager, or Secret Service).
 
-- **Streaming**: las consultas no se materializan enteras. El driver empuja `RowChunk` de 500 filas por un `Channel` de Tauri y la grilla virtualiza el pintado. Topes: 1.000.000 de filas por resultado y 256 KiB por celda.
-- **Sesión del editor**: cada conexión mantiene una conexión fija para el editor, así que las transacciones abarcan varias consultas. La verificación de errores mientras escribes usa otra conexión del pool, para no abortar una transacción abierta.
-- **Escrituras**: los cambios de la grilla y de la estructura se aplican con `execute_batch` en una transacción del pool.
-- **Seguridad**: `gridl-core/src/guard.rs` clasifica cada sentencia (lectura, sesión, datos, estructura) y decide según la política de la conexión. Los comandos de Tauri la aplican antes de llegar al driver.
-- **Cancelación**: envía `pg_cancel_backend` o `KILL QUERY` al servidor.
-- **Ventanas**: cada ventana es dueña de sus conexiones; al cerrarla se desconectan.
+- **Streaming**: queries are never materialized whole. The driver pushes 500-row `RowChunk`s through a Tauri `Channel` and the grid virtualizes rendering. Caps: 1,000,000 rows per result and 256 KiB per cell.
+- **Editor session**: each connection keeps a pinned connection for the editor, so transactions span several queries. Inline error checking uses another pool connection, so it never aborts an open transaction.
+- **Writes**: grid and structure changes go through `execute_batch` in a pool transaction.
+- **Safety**: `gridl-core/src/guard.rs` classifies each statement (read, session, data, structure) and decides according to the connection's policy. The Tauri commands enforce it before reaching the driver.
+- **Cancellation**: sends `pg_cancel_backend` or `KILL QUERY` to the server.
+- **Windows**: each window owns its connections; closing it disconnects them.
 
-### Estructura del repositorio
+### Repository layout
 
 ```text
 Cargo.toml                          workspace
-crates/gridl-core/                  DatabaseDriver, tipos, drivers, política, exportación e importación
-crates/gridl-core/tests/            pruebas por motor (PG y MySQL contra servidor real)
-crates/gridl-desktop/               app Tauri: comandos, ventanas, menú, túnel SSH, respaldo
-crates/gridl-desktop/icons/         íconos (source.svg es el original)
-frontend/src/App.tsx                espacio de trabajo
-frontend/src/workspace/             modelo, grilla, estructura, relaciones, exportación, importación
-frontend/src/editor/                editor SQL y diagnósticos
-frontend/src/home/                  conexiones, formulario y actualizaciones
-frontend/src/__tests__/             pruebas del frontend
-install.sh                          instalador para macOS
-.github/workflows/                  CI y releases
+crates/gridl-core/                  DatabaseDriver, types, drivers, safety policy, export and import
+crates/gridl-core/tests/            per-engine tests (PG and MySQL against a real server)
+crates/gridl-desktop/               Tauri app: commands, windows, menu, SSH tunnel, backup
+crates/gridl-desktop/icons/         icons (source.svg is the original)
+frontend/src/App.tsx                workspace
+frontend/src/workspace/             model, grid, structure, relations, export, import
+frontend/src/editor/                SQL editor and diagnostics
+frontend/src/home/                  connections, connection form, and updates
+frontend/src/__tests__/             frontend tests
+install.sh                          macOS installer
+.github/workflows/                  CI and releases
 ```
 
-### Añadir un motor
+### Adding an engine
 
-1. Implementa `DatabaseDriver` en `crates/gridl-core`.
-2. Registra el valor nuevo de `DatabaseEngine` en el shell (`AppState::driver`).
-3. No acumules el resultado: llama a `ChunkSink::on_chunk` por cada bloque.
-4. Usa una conexión fija por sesión para `query` y una transacción del pool para `execute_batch`.
+1. Implement `DatabaseDriver` in `crates/gridl-core`.
+2. Register the new `DatabaseEngine` value in the shell (`AppState::driver`).
+3. Do not accumulate the result: call `ChunkSink::on_chunk` for each chunk.
+4. Use a pinned connection per session for `query` and a pool transaction for `execute_batch`.
 
-## Licencia
+## License
 
 [MIT](LICENSE).
