@@ -4,10 +4,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { splitStatements } from "./editor/activeSql";
 import { SqlEditor, type SqlEditorHandle } from "./editor/SqlEditor";
 import { ResultGrid, type GridRangeActions } from "./grid/ResultGrid";
+import type { ConnectingState } from "./home/ConnectingStatus";
 import { ConnectionHome, type HomeCommand } from "./home/ConnectionHome";
 import { UpdateCenter } from "./home/UpdateCenter";
 import { toConfig, type Draft } from "./home/draft";
-import { cancelQuery, connect, createGroup, deleteGroup, deleteProfile, disconnect, errorMessage, checkSql, defaultSafety, executeBatch, GuardError, executeQuery, exportQuery, importCsv, backupDatabase, restoreDatabase, formatSqlValue, introspect, listForeignKeys, listProfiles, closeDiscarding, listenHere, openConnectionWindow, quitDiscarding, setUnsaved, qualifiedName, quoteIdent, saveConnection, setDialect, testConnection, writeExport, type BatchStatement, type BrowseKind, type ColumnDefinition, type ConnectionCatalog, type ConnectionConfig, type DatabaseEngine, type ForeignKey, type GuardInfo, type SqlValue, type TableSchema, type TestResult } from "./lib/api";
+import { cancelQuery, connect, createGroup, deleteGroup, deleteProfile, disconnect, errorMessage, checkSql, defaultSafety, executeBatch, GuardError, executeQuery, exportQuery, importCsv, backupDatabase, restoreDatabase, formatSqlValue, introspect, listForeignKeys, listProfiles, closeDiscarding, listenHere, openConnectionWindow, openHomeWindow, quitDiscarding, setUnsaved, qualifiedName, quoteIdent, saveConnection, setDialect, testConnection, writeExport, type BatchStatement, type BrowseKind, type ColumnDefinition, type ConnectionCatalog, type ConnectionConfig, type DatabaseEngine, type ForeignKey, type GuardInfo, type SqlValue, type TableSchema, type TestResult } from "./lib/api";
 import { canEditRows, createSchemaSql, createTableSql, deleteSql, dropSchemaSql, insertSql, listSchemasSql, primaryKeys, renameSchemaSql, rowRecord, schemaNameFrom, updateSql, type ColumnDraft } from "./workspace/changes";
 import { CodedError, describeError, errorCode, isConnectionLost, type ShownError } from "./lib/errors";
 import { formatNumber, formatTime, plural, t } from "./lib/i18n";
@@ -20,9 +21,10 @@ import { ContextMenu, ErrorPanel, GuardDialog, UnsavedDialog, ExportMenu, type M
 import { ImportDialog, type ImportPlan } from "./workspace/ImportDialog";
 import { RelationsPanel } from "./workspace/RelationsPanel";
 import { findTable, keyForColumn, outgoingKeys, incomingKeys, refLabel, resolvedRefColumns } from "./workspace/relations";
+import { SchemaPicker } from "./workspace/SchemaPicker";
 import { StructureEditor } from "./workspace/StructureEditor";
 import { kindLabel, pageSizes, sqlTabId, countValue, clonePending, pendingEmpty, viewKey, viewLabel, primaryKeyList, emptyView, tableTabId, showsRows, objectGroups, schemaMap, describeTabChanges, pendingSummary, pastedRow, isHeaderRow, mergeColumns, structureKey, sameDisplayedRow, fieldsFromValues, fieldsFromDraft, namesFromTables, type TableQuery, type TablePage, type TabView, type TableTab, type PendingChanges, type PageStash, type UndoEntry, type WorkspaceDialog } from "./workspace/model";
-import { sessionKey, workspaceTabs, readSession, writeSession, matchTabs, readPaneWidth, readResultsHeight, clampResults, clampPane, paneLimit } from "./workspace/session";
+import { sessionKey, workspaceTabs, readSession, writeSession, readSchemaView, writeSchemaView, matchTabs, readPaneWidth, readResultsHeight, clampResults, clampPane, paneLimit } from "./workspace/session";
 import { PaneSplitter, TablePager, TreeBranch, ObjectIcon, TableLeaf } from "./workspace/chrome";
 
 const emptyCatalog: ConnectionCatalog = { groups: [], profiles: [] };
@@ -49,6 +51,8 @@ export function App() {
   const [tableTabs, setTableTabs] = useState<TableTab[]>([]);
   const [paging, setPaging] = useState<Record<string, TablePage>>({});
   const [schemaChoice, setSchemaChoice] = useState("public");
+  /** Postgres only: show every schema as a tree instead of the one picked above it. */
+  const [allSchemas, setAllSchemas] = useState(false);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [dbSchemas, setDbSchemas] = useState<string[]>([]);
   const [pickedRows, setPickedRows] = useState<number[]>([]);
@@ -63,6 +67,11 @@ export function App() {
   });
   const [running, setRunning] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [connecting, setConnecting] = useState<ConnectingState | null>(null);
+  /** Bumped by every connect and by Cancel, so a late answer knows it was abandoned. */
+  const connectAttempt = useRef(0);
+  /** The last attempt per connection, including a cancelled one's cleanup, so two never overlap. */
+  const connectTail = useRef(new Map<string, Promise<unknown>>());
   const [filterDrafts, setFilterDrafts] = useState<Record<string, TableFilter[]>>({});
   const [filterOpen, setFilterOpen] = useState<Record<string, boolean>>({});
   const [tableQueries, setTableQueries] = useState<Record<string, TableQuery>>({});
@@ -226,6 +235,11 @@ export function App() {
         return;
       }
       if (kind !== "new-connection" && kind !== "new-group") return;
+      // Working in a connection: open the form in a new window and keep this one as it is.
+      if (activeRef.current) {
+        void openHomeWindow(kind).catch((caught: unknown) => setError(errorMessage(caught)));
+        return;
+      }
       void (async () => {
         if (!(await confirmDiscardRef.current({ action: t("app.discard.leaveConnection") }))) return;
         setInTransaction(false);
@@ -276,6 +290,12 @@ export function App() {
         const wanted = new URLSearchParams(window.location.hash.slice(1)).get("connect");
         const profile = wanted ? next.profiles.find((item) => item.id === wanted) : undefined;
         if (profile) void openSavedRef.current(profile);
+        // A window opened by ⌘N from a connection carries the command: #command=new-connection.
+        const command = new URLSearchParams(window.location.hash.slice(1)).get("command");
+        if (command === "new-connection" || command === "new-group") {
+          commandNonce.current += 1;
+          setHomeCommand({ nonce: commandNonce.current, kind: command });
+        }
       })
       .catch((caught: unknown) => {
         if (!cancelled) setError(errorMessage(caught));
@@ -312,7 +332,9 @@ export function App() {
     rowHandles.current = {};
     setTableTabs(tabs);
     setPaging({});
-    setSchemaChoice("public");
+    const schemaView = readSchemaView(config.id);
+    setSchemaChoice(schemaView.schema);
+    setAllSchemas(schemaView.all);
     setPickedRows([]);
     undoStack.current = [];
     pendingRef.current = {};
@@ -330,11 +352,46 @@ export function App() {
   };
 
   const openSavedRef = useRef<(profile: ConnectionConfig) => Promise<boolean>>(async () => false);
+  /**
+   * Connects with progress shown on the connection's card; resolves to null when
+   * cancelled, or when another connection was opened meanwhile.
+   */
+  const connectWithStatus = (request: Parameters<typeof connect>[0]) => {
+    const attempt = ++connectAttempt.current;
+    const id = request.config.id;
+    const previous = connectTail.current.get(id) ?? Promise.resolve();
+    setConnecting({ id, stage: "connect", started: Date.now() });
+    const run = (async () => {
+      await previous.catch(() => undefined);
+      if (attempt !== connectAttempt.current) return null;
+      try {
+        const response = await connect(request);
+        if (attempt === connectAttempt.current) return response;
+        await disconnect(response.config.id).catch(() => undefined);
+        return null;
+      } catch (caught) {
+        if (attempt === connectAttempt.current) throw caught;
+        return null;
+      } finally {
+        if (attempt === connectAttempt.current) setConnecting(null);
+      }
+    })();
+    connectTail.current.set(id, run);
+    void run.finally(() => {
+      if (connectTail.current.get(id) === run) connectTail.current.delete(id);
+    }).catch(() => undefined);
+    return run;
+  };
+  const cancelConnecting = () => {
+    connectAttempt.current += 1;
+    setConnecting(null);
+    setBusy(false);
+  };
+
   const openSaved = async (profile: ConnectionConfig) => {
-    setBusy(true);
     setError(null);
     try {
-      const response = await connect({
+      const response = await connectWithStatus({
         config: profile,
         password: null,
         rememberPassword: false,
@@ -342,6 +399,7 @@ export function App() {
         rememberSshSecret: false,
         trustSshHost: false,
       });
+      if (!response) return false;
       setCatalog(await listProfiles());
       enter(response.config, response.tables);
       return true;
@@ -351,8 +409,6 @@ export function App() {
       if (message.startsWith("gridl-focused:")) return false;
       setError(message);
       return false;
-    } finally {
-      setBusy(false);
     }
   };
   openSavedRef.current = openSaved;
@@ -360,6 +416,7 @@ export function App() {
   const saveDraft = async (draft: Draft, openAfter: boolean) => {
     setBusy(true);
     setError(null);
+    const attempt = connectAttempt.current + 1;
     try {
       const request = {
         config: toConfig(draft),
@@ -370,7 +427,8 @@ export function App() {
         trustSshHost: draft.trustSshHost,
       };
       if (openAfter) {
-        const response = await connect(request);
+        const response = await connectWithStatus(request);
+        if (!response) return false;
         setCatalog(await listProfiles());
         enter(response.config, response.tables);
       } else {
@@ -381,7 +439,7 @@ export function App() {
       setError(errorMessage(caught));
       return false;
     } finally {
-      setBusy(false);
+      if (!openAfter || attempt === connectAttempt.current) setBusy(false);
     }
   };
 
@@ -839,6 +897,13 @@ export function App() {
     if (runningTab.current === id && activeQuery.current) void cancelQuery(activeQuery.current);
     delete rowsByTab.current[id];
     delete rowHandles.current[id];
+    // Drop the view with its rows: a stale row count over an empty buffer draws a grid of NULLs.
+    setViews((current) => {
+      if (!(id in current)) return current;
+      const next = { ...current };
+      delete next[id];
+      return next;
+    });
     undoStack.current = undoStack.current.filter((entry) => entry.id !== id);
     setPending((current) => {
       if (!(id in current)) return current;
@@ -973,6 +1038,20 @@ export function App() {
     : schemaNames.includes("public")
       ? "public"
       : (schemaNames[0] ?? "");
+  const schemaCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const table of tables) {
+      if (table.schema && table.kind === "table") counts[table.schema] = (counts[table.schema] ?? 0) + 1;
+    }
+    return counts;
+  }, [tables]);
+  const pickSchema = (name: string, all: boolean) => {
+    if (name) setSchemaChoice(name);
+    setAllSchemas(all);
+    if (active) writeSchemaView(active.id, { schema: name || activeSchema, all });
+  };
+  /** Searching looks through every schema, so a match in another one is never hidden. */
+  const schemaTree = engine === "postgres" && (allSchemas || Boolean(needle));
   const searched = tables.filter((table) => {
     if (!needle) return true;
     return table.name.toLowerCase().includes(needle) || (table.schema ?? "").toLowerCase().includes(needle);
@@ -1622,6 +1701,18 @@ export function App() {
     return () => stop();
   }, []);
 
+  useEffect(() => {
+    let stop = () => {};
+    void listenHere<string>("gridl-connect-progress", (event) => {
+      if (event.payload === "schema") setConnecting((current) => (current ? { ...current, stage: "schema" } : current));
+    })
+      .then((unlisten) => {
+        stop = unlisten;
+      })
+      .catch(() => undefined);
+    return () => stop();
+  }, []);
+
   const updates = <UpdateCenter beforeRestart={() => confirmDiscardRef.current({ action: t("app.discard.update") })} />;
 
   if (screen === "home") {
@@ -1631,6 +1722,8 @@ export function App() {
         catalog={catalog}
         busy={busy}
         error={error}
+        connecting={connecting}
+        onCancelConnect={cancelConnecting}
         onCreateGroup={addGroup}
         onDeleteGroup={removeGroup}
         onDeleteConnection={removeConnection}
@@ -1792,18 +1885,41 @@ export function App() {
             <Search size={14} />
             <input value={objectQuery} placeholder={t("app.explorer.search")} onChange={(event) => setObjectQuery(event.target.value)} />
           </div>
+          {engine === "postgres" ? (
+            <div className="schema-bar">
+              <SchemaPicker
+                schemas={schemaNames}
+                counts={schemaCounts}
+                current={activeSchema}
+                all={allSchemas}
+                onPick={(name) => pickSchema(name, false)}
+                onShowAll={() => pickSchema("", true)}
+              />
+              {!allSchemas && activeSchema ? (
+                <>
+                  <button type="button" className="tiny-icon" aria-label={t("app.explorer.rename", { name: activeSchema })} title={t("app.explorer.rename", { name: activeSchema })} disabled={structureLocked || running} onClick={() => openDialog({ kind: "rename-schema", name: activeSchema })}>
+                    <Pencil size={13} />
+                  </button>
+                  <button type="button" className="tiny-icon" aria-label={t("app.explorer.delete", { name: activeSchema })} title={t("app.explorer.delete", { name: activeSchema })} disabled={structureLocked || running} onClick={() => openDialog({ kind: "drop-schema", name: activeSchema })}>
+                    <Trash2 size={13} />
+                  </button>
+                </>
+              ) : null}
+              <button type="button" className="tiny-icon" aria-label={t("app.explorer.createSchema")} title={t("app.explorer.createSchema")} disabled={structureLocked || running} onClick={() => openDialog({ kind: "create-schema" })}>
+                <Plus size={14} />
+              </button>
+            </div>
+          ) : null}
           <div className="tree-section">
+            {engine === "postgres" && !schemaTree ? (
+              activeSchema ? renderGroups(activeSchema, "depth-0", "depth-1") : <div className="tree-item depth-0">{t("app.explorer.noSchemas")}</div>
+            ) : (
             <TreeBranch
               label={active?.database || t("app.explorer.database")}
               depth="depth-0 tree-root"
               icon={<Database size={15} />}
               open={branchOpen("db", true)}
               onToggle={() => toggleBranch("db", true)}
-              actions={engine === "postgres" ? (
-                <button type="button" className="tiny-icon" aria-label={t("app.explorer.createSchema")} disabled={structureLocked || running} onClick={() => openDialog({ kind: "create-schema" })}>
-                  <Plus size={14} />
-                </button>
-              ) : null}
             >
               {engine === "postgres" ? (
                 schemaNames.filter((name) => !needle || searched.some((table) => table.schema === name) || name.toLowerCase().includes(needle)).map((name) => {
@@ -1840,6 +1956,7 @@ export function App() {
               ) : renderGroups(null, "depth-1", "depth-2")}
               {engine === "postgres" && schemaNames.length === 0 ? <div className="tree-item depth-1">{t("app.explorer.noSchemas")}</div> : null}
             </TreeBranch>
+            )}
           </div>
         </aside>
         ) : null}
@@ -1986,7 +2103,7 @@ export function App() {
             <div className="results-stage">
               <div className="editor-toolbar">
                 <div className="toolbar-title">
-                  <span>{activeTable.table.schema ? `${activeTable.table.schema}.${activeTable.table.name}` : activeTable.table.name}</span>
+                  <span title={activeTable.table.schema ? `${activeTable.table.schema}.${activeTable.table.name}` : activeTable.table.name}>{activeTable.table.schema ? `${activeTable.table.schema}.${activeTable.table.name}` : activeTable.table.name}</span>
                   {structureTable && !structureLocked ? (
                     <div className="view-switch" role="tablist">
                       <button type="button" className={tablePane === "rows" ? "active" : undefined} onClick={() => setTablePane("rows")}>{t("app.table.data")}</button>
@@ -2019,10 +2136,10 @@ export function App() {
                         <Upload size={14} /> {t("app.table.import")}
                       </button>
                     ) : null}
-                    <button type="button" className="toolbar-button" disabled={!writable || running || tableView.columns.length === 0} onClick={startDraft}>
+                    <button type="button" className="toolbar-button" disabled={!writable || running || tableView.columns.length === 0} title={t("app.table.row")} onClick={startDraft}>
                       <Plus size={14} /> {t("app.table.row")}
                     </button>
-                    <button type="button" className="toolbar-button" disabled={!writable || running || pickedRows.length === 0} onClick={() => markRows(pickedRows)}>
+                    <button type="button" className="toolbar-button" disabled={!writable || running || pickedRows.length === 0} title={t("app.table.delete")} onClick={() => markRows(pickedRows)}>
                       <Trash2 size={14} /> {t("app.table.delete")}
                     </button>
                     {pending[activeTable.id] || stashes[activeTable.id]?.length ? (

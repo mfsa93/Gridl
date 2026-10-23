@@ -102,3 +102,30 @@ export function paneLimit(body: HTMLDivElement | null, other: number) {
   const total = body?.clientWidth ?? 1100;
   return total - other - 420;
 }
+
+export type SchemaView = { schema: string; all: boolean };
+
+function schemaViewKey(id: string): string {
+  return `gridl.schemaView:${id}`;
+}
+
+/** Which schema the explorer showed last time for this connection. */
+export function readSchemaView(id: string): SchemaView {
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(schemaViewKey(id)) ?? "null") as Partial<SchemaView> | null;
+    return {
+      schema: typeof parsed?.schema === "string" && parsed.schema ? parsed.schema : "public",
+      all: parsed?.all === true,
+    };
+  } catch {
+    return { schema: "public", all: false };
+  }
+}
+
+export function writeSchemaView(id: string, view: SchemaView) {
+  try {
+    window.localStorage.setItem(schemaViewKey(id), JSON.stringify(view));
+  } catch {
+    // Only a convenience; the explorer falls back to public.
+  }
+}

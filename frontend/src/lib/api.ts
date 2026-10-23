@@ -339,6 +339,11 @@ export function openConnectionWindow(connectionId: string): Promise<string> {
   return invoke("open_connection_window", { connectionId });
 }
 
+/** Opens a new window on the connection list, running `command` there. */
+export function openHomeWindow(command: "new-connection" | "new-group"): Promise<string> {
+  return invoke("open_home_window", { command });
+}
+
 export function closeDiscarding(): Promise<void> {
   return invoke("close_discarding");
 }
