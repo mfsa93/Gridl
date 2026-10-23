@@ -2,6 +2,18 @@
 
 Cliente de bases de datos de escritorio, open source y modular. La interfaz corre en Tauri 2 y el motor de datos es una crate Rust independiente, sin Electron.
 
+## Instalar
+
+En macOS, pega esto en Terminal:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/mfsa93/Gridl/master/install.sh | sh
+```
+
+Descarga la última versión desde las releases de GitHub, la copia a Aplicaciones y la abre. Como lo descarga `curl`, macOS no pide confirmación aunque la app no esté firmada por Apple. Después, Gridl se actualiza solo desde **Gridl → Buscar actualizaciones…**
+
+Para publicar una versión nueva: sube el número de versión en `crates/gridl-desktop/tauri.conf.json` y en `Cargo.toml`, crea la etiqueta `vX.Y.Z` y súbela. El flujo `release.yml` compila, firma y publica.
+
 ## Arquitectura
 
 ```text
