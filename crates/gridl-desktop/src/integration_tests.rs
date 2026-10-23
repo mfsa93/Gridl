@@ -1,5 +1,6 @@
 //! Command logic end to end: SQLite always, PostgreSQL and MySQL when
 //! `GRIDL_TEST_PG` / `GRIDL_TEST_MYSQL` point at a server, for example
+//! (backup and restore also need `GRIDL_TEST_BACKUP=1` and the client tools installed)
 //! `postgres:gridl@127.0.0.1:35432/gridl` and `root:gridl@127.0.0.1:33306/gridl`.
 
 use std::path::{Path, PathBuf};
@@ -12,7 +13,7 @@ use gridl_core::{
     ExportFormat, RowChunk, SafetySettings, SecretString, SqlValue, TlsMode,
 };
 
-use crate::backup::{run_backup, BackupRequest};
+use crate::backup::{run_backup, run_restore, BackupRequest, RestoreRequest};
 use crate::commands::{run_batch, run_query, ExecuteBatchRequest, ExecuteQueryRequest};
 use crate::state::AppState;
 use crate::transfer::{run_export, run_import, ExportRequest, ImportRequest};
@@ -439,4 +440,88 @@ async fn import_into_typed_table(state: &AppState, id: &ConnectionId, stamp: &st
         .await,
         SqlValue::Int(1)
     );
+}
+
+/// Backs up a table, wipes it, restores the file, and checks the rows came back.
+async fn backup_round_trip(state: &AppState, id: &ConnectionId, password: &str, extension: &str) {
+    batch(
+        state,
+        id,
+        &[
+            "DROP TABLE IF EXISTS gridl_backup_probe",
+            "CREATE TABLE gridl_backup_probe (id INT PRIMARY KEY, name VARCHAR(40))",
+            "INSERT INTO gridl_backup_probe VALUES (1, 'uno'), (2, 'dos'), (3, 'tres')",
+        ],
+    )
+    .await
+    .expect("seed");
+    let path = scratch(&format!("{}-backup.{extension}", id.as_str()));
+    let done = run_backup(
+        state,
+        BackupRequest {
+            connection_id: id.as_str().into(),
+            path: path.to_string_lossy().into(),
+            password: Some(password.into()),
+        },
+    )
+    .await
+    .expect("backup");
+    assert!(done.bytes > 0);
+    batch(state, id, &["DELETE FROM gridl_backup_probe WHERE id > 1"]).await.expect("wipe");
+    assert_eq!(
+        scalar(state, id, "SELECT count(*) FROM gridl_backup_probe").await,
+        SqlValue::Int(1)
+    );
+
+    let unauthorized = RestoreRequest {
+        connection_id: id.as_str().into(),
+        path: path.to_string_lossy().into(),
+        password: Some(password.into()),
+        authorized: false,
+    };
+    // Restoring is destructive, so the guard asks first even on a local connection.
+    assert!(run_restore(state, unauthorized)
+        .await
+        .expect_err("needs authorization")
+        .starts_with("gridl-guard:"));
+    run_restore(
+        state,
+        RestoreRequest {
+            connection_id: id.as_str().into(),
+            path: path.to_string_lossy().into(),
+            password: Some(password.into()),
+            authorized: true,
+        },
+    )
+    .await
+    .expect("restore over the same database");
+    assert_eq!(
+        scalar(state, id, "SELECT count(*) FROM gridl_backup_probe").await,
+        SqlValue::Int(3)
+    );
+    let _ = std::fs::remove_file(path);
+}
+
+fn backup_enabled() -> bool {
+    std::env::var("GRIDL_TEST_BACKUP").is_ok_and(|value| value == "1")
+}
+
+#[tokio::test]
+async fn postgres_backup_and_restore_round_trip() {
+    let Some(server) = server("GRIDL_TEST_PG").filter(|_| backup_enabled()) else {
+        return;
+    };
+    let state = AppState::new();
+    let id = open_server(&state, "pg-backup", DatabaseEngine::Postgres, &server).await;
+    backup_round_trip(&state, &id, &server.password, "sql").await;
+}
+
+#[tokio::test]
+async fn mysql_backup_and_restore_round_trip() {
+    let Some(server) = server("GRIDL_TEST_MYSQL").filter(|_| backup_enabled()) else {
+        return;
+    };
+    let state = AppState::new();
+    let id = open_server(&state, "my-backup", DatabaseEngine::Mysql, &server).await;
+    backup_round_trip(&state, &id, &server.password, "sql").await;
 }
