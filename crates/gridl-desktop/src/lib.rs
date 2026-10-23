@@ -55,6 +55,7 @@ pub fn run() {
             commands::quit_discarding,
             commands::close_discarding,
             windows::open_connection_window,
+            windows::open_home_window,
             transfer::export_query,
             transfer::preview_csv,
             transfer::import_csv,

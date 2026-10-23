@@ -8,8 +8,8 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use gridl_core::{
     BatchRequest, BatchStatement, ChunkSink, ConnectionConfig, ConnectionId, CoreError,
-    DatabaseDriver, DatabaseEngine, PostgresDriver, QueryRequest, RowChunk, SecretString, SqlValue,
-    TlsMode, DEFAULT_CHUNK_ROWS, MAX_STREAM_ROWS,
+    DatabaseDriver, DatabaseEngine, PostgresDriver, QueryRequest, RelationKind, RelationRef,
+    RowChunk, SecretString, SqlValue, TlsMode, DEFAULT_CHUNK_ROWS, MAX_STREAM_ROWS,
 };
 
 struct VecSink(Vec<RowChunk>);
@@ -291,5 +291,233 @@ async fn postgres_lists_foreign_keys_in_column_order() {
     assert_eq!(line.ref_columns, vec!["region".to_owned(), "id".to_owned()]);
     assert_eq!(line.on_update, "SET NULL");
     assert_eq!(line.schema.as_deref(), Some("public"));
+    driver.disconnect(&id).await.expect("disconnect");
+}
+
+/// Every built-in type plus common extension types, one column each.
+const ALL_TYPES: &[(&str, &str, &str)] = &[
+    // (column, type, a sample literal)
+    ("c_int2", "smallint", "-32768"),
+    ("c_int4", "integer", "2147483647"),
+    ("c_int8", "bigint", "-9223372036854775808"),
+    ("c_numeric", "numeric", "123456789012345678901234567890.123456789"),
+    ("c_numeric_scaled", "numeric(12,2)", "1234.5"),
+    ("c_numeric_nan", "numeric", "'NaN'"),
+    ("c_real", "real", "3.25"),
+    ("c_double", "double precision", "'-Infinity'"),
+    ("c_money", "money", "12.34"),
+    ("c_text", "text", "'héllo ✓'"),
+    ("c_varchar", "varchar(20)", "'short'"),
+    ("c_char", "char(5)", "'ab'"),
+    ("c_qchar", "\"char\"", "'x'"),
+    ("c_name", "name", "'pg_name'"),
+    ("c_bytea", "bytea", "'\\xdeadbeef'"),
+    ("c_bool", "boolean", "true"),
+    ("c_date", "date", "'2026-06-12'"),
+    ("c_date_inf", "date", "'infinity'"),
+    ("c_date_bc", "date", "'0044-03-15 BC'"),
+    ("c_time", "time", "'13:45:07.25'"),
+    ("c_time3", "time(3)", "'23:59:59.999'"),
+    ("c_timetz", "timetz", "'08:00:00+05:30'"),
+    ("c_timestamp", "timestamp", "'2026-06-12 10:00:00.123456'"),
+    ("c_timestamp_inf", "timestamp", "'-infinity'"),
+    ("c_timestamptz", "timestamptz", "'2026-06-12 10:00:00+02'"),
+    ("c_interval", "interval", "'1 year 2 mons 3 days 04:05:06.5'"),
+    ("c_point", "point", "'(1.5,2)'"),
+    ("c_line", "line", "'{1,2,3}'"),
+    ("c_lseg", "lseg", "'[(0,0),(1,1)]'"),
+    ("c_box", "box", "'(1,1),(0,0)'"),
+    ("c_path", "path", "'[(0,0),(1,1),(2,0)]'"),
+    ("c_polygon", "polygon", "'((0,0),(1,1),(2,0))'"),
+    ("c_circle", "circle", "'<(1,1),5>'"),
+    ("c_cidr", "cidr", "'10.0.0.0/8'"),
+    ("c_inet", "inet", "'192.168.0.1'"),
+    ("c_inet6", "inet", "'::1/64'"),
+    ("c_macaddr", "macaddr", "'08:00:2b:01:02:03'"),
+    ("c_macaddr8", "macaddr8", "'08:00:2b:01:02:03:04:05'"),
+    ("c_bit", "bit(4)", "B'1010'"),
+    ("c_varbit", "bit varying(8)", "B'101'"),
+    ("c_tsvector", "tsvector", "'a fat cat'"),
+    ("c_tsquery", "tsquery", "'fat & (rat | cat)'"),
+    ("c_uuid", "uuid", "'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'"),
+    ("c_xml", "xml", "'<a>1</a>'"),
+    ("c_json", "json", "'{\"a\": [1, 2]}'"),
+    ("c_jsonb", "jsonb", "'{\"b\": {\"c\": null}}'"),
+    ("c_jsonpath", "jsonpath", "'$.a[*] ? (@ > 1)'"),
+    ("c_int4range", "int4range", "'[1,10)'"),
+    ("c_int8range", "int8range", "'empty'"),
+    ("c_numrange", "numrange", "'(1.5,2.5]'"),
+    ("c_tsrange", "tsrange", "'[2026-01-01,2026-02-01)'"),
+    ("c_tstzrange", "tstzrange", "'[2026-01-01 00:00+00,)'"),
+    ("c_daterange", "daterange", "'[2026-01-01,2026-01-31]'"),
+    ("c_multirange", "int4multirange", "'{[1,3), [5,8)}'"),
+    ("c_pg_lsn", "pg_lsn", "'16/B374D848'"),
+    ("c_snapshot", "pg_snapshot", "'10:20:10,14,15'"),
+    ("c_txid_snapshot", "txid_snapshot", "'10:20:10,14,15'"),
+    ("c_oid", "oid", "4294967295"),
+    ("c_regclass", "regclass", "'pg_class'"),
+    ("c_regtype", "regtype", "'integer'"),
+    ("c_regproc", "regproc", "'now'"),
+    ("c_xid", "xid", "'42'"),
+    ("c_xid8", "xid8", "'42'"),
+    ("c_cid", "cid", "'7'"),
+    ("c_tid", "tid", "'(0,1)'"),
+    ("c_int2vector", "int2vector", "'1 2 3'"),
+    ("c_oidvector", "oidvector", "'23 25'"),
+    ("c_aclitem", "aclitem", "'postgres=arwdDxtm/postgres'"),
+    ("c_int_array", "integer[]", "'{1,NULL,3}'"),
+    ("c_text_array", "text[]", "'{\"a b\",\"c,d\",NULL}'"),
+    ("c_matrix", "integer[][]", "'{{1,2},{3,4}}'"),
+    ("c_numeric_array", "numeric[]", "'{1.50,NaN}'"),
+    ("c_date_array", "date[]", "'{2026-01-01,infinity}'"),
+    ("c_enum", "gridl_t_mood", "'sad'"),
+    ("c_enum_array", "gridl_t_mood[]", "'{ok,sad}'"),
+    ("c_composite", "gridl_t_pair", "'(1,\"two words\")'"),
+    ("c_domain_int", "gridl_t_positive", "5"),
+    ("c_domain_text", "gridl_t_code", "'ABC'"),
+    ("c_hstore", "hstore", "'a=>1, b=>NULL'"),
+    ("c_citext", "citext", "'MiXeD'"),
+    ("c_ltree", "ltree", "'top.science.astronomy'"),
+    ("c_cube", "cube", "'(1,2),(3,4)'"),
+];
+
+#[tokio::test]
+async fn postgres_reads_and_writes_back_every_type() {
+    let Some(target) = target() else { return };
+    let (driver, id) = open(&target, "pg-types", false).await;
+    for sql in [
+        "CREATE EXTENSION IF NOT EXISTS hstore",
+        "CREATE EXTENSION IF NOT EXISTS citext",
+        "CREATE EXTENSION IF NOT EXISTS ltree",
+        "CREATE EXTENSION IF NOT EXISTS cube",
+        "DROP TABLE IF EXISTS gridl_types",
+        "DROP TYPE IF EXISTS gridl_t_mood CASCADE",
+        "DROP TYPE IF EXISTS gridl_t_pair CASCADE",
+        "DROP DOMAIN IF EXISTS gridl_t_positive CASCADE",
+        "DROP DOMAIN IF EXISTS gridl_t_code CASCADE",
+        "CREATE TYPE gridl_t_mood AS ENUM ('ok', 'sad')",
+        "CREATE TYPE gridl_t_pair AS (n int, label text)",
+        "CREATE DOMAIN gridl_t_positive AS int CHECK (VALUE > 0)",
+        "CREATE DOMAIN gridl_t_code AS text CHECK (VALUE ~ '^[A-Z]+$')",
+    ] {
+        run(&driver, &id, sql).await;
+    }
+    let columns: Vec<String> =
+        ALL_TYPES.iter().map(|(name, kind, _)| format!("{name} {kind}")).collect();
+    run(
+        &driver,
+        &id,
+        &format!("CREATE TABLE gridl_types (id int PRIMARY KEY, {})", columns.join(", ")),
+    )
+    .await;
+    let names: Vec<&str> = ALL_TYPES.iter().map(|(name, _, _)| *name).collect();
+    let samples: Vec<&str> = ALL_TYPES.iter().map(|(_, _, sample)| *sample).collect();
+    run(
+        &driver,
+        &id,
+        &format!(
+            "INSERT INTO gridl_types (id, {}) VALUES (1, {})",
+            names.join(", "),
+            samples.join(", ")
+        ),
+    )
+    .await;
+    run(&driver, &id, "INSERT INTO gridl_types (id) VALUES (2)").await;
+
+    // What PostgreSQL itself prints for each column.
+    let printed: Vec<String> = names.iter().map(|name| format!("format('%s', {name})")).collect();
+    let expected =
+        run(&driver, &id, &format!("SELECT {} FROM gridl_types WHERE id = 1", printed.join(", ")))
+            .await;
+    let expected = expected.iter().flat_map(|chunk| chunk.rows.iter()).next().expect("row").clone();
+
+    let read = |chunks: Vec<RowChunk>| -> Vec<Vec<SqlValue>> {
+        chunks.into_iter().flat_map(|chunk| chunk.rows.into_iter()).collect()
+    };
+    let shown = |value: &SqlValue| -> String {
+        match value {
+            SqlValue::Text(text) => text.clone(),
+            SqlValue::Int(value) => value.to_string(),
+            SqlValue::Float(value) => value.to_string(),
+            SqlValue::Bool(value) => {
+                if *value {
+                    "t".into()
+                } else {
+                    "f".into()
+                }
+            }
+            SqlValue::Bytes(bytes) => {
+                format!("\\x{}", bytes.iter().map(|byte| format!("{byte:02x}")).collect::<String>())
+            }
+            SqlValue::Null => "NULL".into(),
+        }
+    };
+    let select = format!("SELECT {} FROM gridl_types ORDER BY id", names.join(", "));
+    let rows = read(run(&driver, &id, &select).await);
+    assert_eq!(rows.len(), 2);
+    for (index, (name, kind, _)) in ALL_TYPES.iter().enumerate() {
+        let SqlValue::Text(printed) = &expected[index] else { panic!("{name}: printed") };
+        assert_eq!(
+            &shown(&rows[0][index]),
+            printed,
+            "{name} ({kind}) reads as PostgreSQL prints it"
+        );
+        assert_eq!(rows[1][index], SqlValue::Null, "{name} ({kind}) NULL");
+    }
+
+    // With parameters the values are inlined and still come back as text, identical.
+    let mut sink = VecSink(Vec::new());
+    let request = QueryRequest::new(
+        "query-params",
+        format!(
+            "SELECT {} FROM gridl_types WHERE id = $1 AND $2::text = 'it''s' ORDER BY id",
+            names.join(", ")
+        ),
+        vec![SqlValue::Int(1), SqlValue::Text("it's".into())],
+        DEFAULT_CHUNK_ROWS,
+        MAX_STREAM_ROWS,
+        Arc::new(AtomicBool::new(false)),
+    )
+    .expect("request");
+    driver.query(&id, &request, &mut sink).await.expect("select with parameters");
+    assert_eq!(read(sink.0), rows[..1].to_vec(), "same values with parameters");
+
+    // Saving a cell sends what the grid shows, cast to the column's type, as the app does.
+    let table = driver
+        .describe_relation(
+            &id,
+            &RelationRef {
+                schema: Some("public".into()),
+                name: "gridl_types".into(),
+                kind: RelationKind::Table,
+            },
+        )
+        .await
+        .expect("describe");
+    for (index, (name, kind, _)) in ALL_TYPES.iter().enumerate() {
+        let column = table.columns.iter().find(|column| column.name == *name).expect("column");
+        assert!(
+            column.data_type != "ARRAY" && column.data_type != "USER-DEFINED",
+            "{name} ({kind}) has a castable type name, got {}",
+            column.data_type
+        );
+        let sql = format!("UPDATE gridl_types SET {name} = $1::{} WHERE id = 1", column.data_type);
+        let batch = BatchRequest::new(vec![BatchStatement {
+            sql: sql.clone(),
+            params: vec![rows[0][index].clone()],
+        }])
+        .expect("batch");
+        driver
+            .execute_batch(&id, &batch)
+            .await
+            .unwrap_or_else(|err| panic!("{name} ({kind}): {sql}: {err}"));
+    }
+    let again = read(run(&driver, &id, &select).await);
+    for (index, (name, kind, _)) in ALL_TYPES.iter().enumerate() {
+        assert_eq!(
+            again[0][index], rows[0][index],
+            "{name} ({kind}) is unchanged after saving it back"
+        );
+    }
     driver.disconnect(&id).await.expect("disconnect");
 }

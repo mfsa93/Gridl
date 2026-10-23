@@ -745,6 +745,15 @@ html.vibrant .sidebar-card, html.vibrant .explorer, html.vibrant .details-panel 
 }
 .editor-toolbar > div { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 6px; flex: 0 1 auto; }
 .editor-toolbar .toolbar-button, .editor-toolbar .run-button { height: 26px; padding: 0 10px; font-size: 12px; }
+/* The title gives way first: it truncates so long table names never push the tools onto a second line. */
+.editor-toolbar > .toolbar-title { flex: 1 1 auto; flex-wrap: nowrap; justify-content: flex-start; min-width: 140px; }
+.editor-toolbar > .toolbar-title .view-switch { flex: none; }
+.results-stage { container: table-stage / inline-size; }
+.results-stage .editor-toolbar > div:not(.toolbar-title) { flex: none; flex-wrap: nowrap; }
+/* Narrow windows: the table tools keep their icons and tooltips, and drop their labels. */
+@container table-stage (max-width: 860px) {
+  .editor-toolbar > div:not(.toolbar-title) .toolbar-button { gap: 0; padding: 0 8px; font-size: 0; }
+}
 .toolbar-title { display: flex; align-items: center; gap: 12px; min-width: 0; color: var(--label); font-size: 13px; font-weight: 600; }
 .toolbar-title > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .editor-host { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; min-height: 96px; overflow: hidden; }
@@ -1305,3 +1314,35 @@ select {
 .update-progress > span { display: block; height: 100%; border-radius: 3px; background: var(--accent); transition: width 0.2s ease; }
 .update-progress > span.indeterminate { animation: update-slide 1.2s ease-in-out infinite; }
 @keyframes update-slide { from { transform: translateX(-100%); } to { transform: translateX(300%); } }
+
+/* A connection that is opening shows its progress on its own card. */
+.connection-card-wrap.opening .connection-card { opacity: 1; cursor: progress; }
+.connection-card-wrap.opening .connection-card > .env-pill,
+.connection-card-wrap.opening .connection-card > .connection-type,
+.connection-card-wrap.opening .connection-card > .connection-last,
+.connection-card-wrap.opening .connection-card > .chevron { visibility: hidden; }
+.card-connecting { position: absolute; top: 50%; right: 14px; display: flex; align-items: center; gap: 10px; max-width: 55%; transform: translateY(-50%); animation: fade-in 0.15s ease-out; }
+.card-connecting .secondary-button { flex: none; height: 24px; padding: 0 10px; font-size: 12px; }
+.card-connecting-text { display: flex; flex-direction: column; min-width: 0; color: var(--label-2); font-size: 12px; font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+.card-connecting-text small { overflow: hidden; color: var(--label-3); font-size: 11px; text-overflow: ellipsis; }
+.connecting-spinner { flex: none; width: 16px; height: 16px; border: 2px solid var(--fill-strong); border-top-color: var(--accent); border-radius: 50%; animation: connecting-spin 0.8s linear infinite; }
+@keyframes connecting-spin { to { transform: rotate(360deg); } }
+
+/* Schema picker above the explorer tree */
+.schema-bar { display: flex; align-items: center; gap: 2px; margin: 0 10px 6px; }
+.schema-bar > .tiny-icon svg { color: var(--label-2); }
+.schema-picker-anchor { position: relative; flex: 1; min-width: 0; }
+.schema-picker-button { display: flex; align-items: center; gap: 6px; width: 100%; height: 26px; padding: 0 8px; border-radius: 6px; color: var(--label); background: var(--fill); font-size: 12px; font-weight: 500; text-align: left; }
+.schema-picker-button:hover { background: var(--fill-strong); }
+.schema-picker-button span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.schema-picker-button svg { flex: none; color: var(--label-2); }
+.schema-picker-menu { position: absolute; top: calc(100% + 4px); left: 0; z-index: 25; width: max(100%, 220px); padding: 5px; border-radius: 8px; background: var(--elevated); box-shadow: var(--shadow-popover); -webkit-backdrop-filter: blur(30px) saturate(1.6); backdrop-filter: blur(30px) saturate(1.6); animation: fade-in 0.1s ease-out; }
+.schema-picker-search { margin: 0 0 5px; }
+.schema-picker-list { max-height: min(360px, 60vh); overflow-y: auto; }
+.schema-picker-menu button { display: flex; align-items: center; gap: 6px; width: 100%; padding: 4px 8px; border-radius: 4px; color: var(--label); background: transparent; font-size: 13px; line-height: 18px; text-align: left; }
+.schema-picker-menu button span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.schema-picker-menu button small { color: var(--label-3); font-size: 11px; font-variant-numeric: tabular-nums; }
+.schema-picker-menu button:hover { color: #fff; background: var(--accent); }
+.schema-picker-menu button:hover small, .schema-picker-menu button:hover svg { color: #fff; }
+.schema-picker-menu .invisible { visibility: hidden; }
+.schema-picker-empty { padding: 6px 8px; color: var(--label-2); font-size: 12px; }

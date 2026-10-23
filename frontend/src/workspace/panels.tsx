@@ -1,5 +1,5 @@
 import { ArrowUpRight, CircleAlert, Copy, ShieldAlert, ShieldX, TriangleAlert, Download, Filter, History, Plus, Star, Trash2, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { formatSqlValue, type BatchStatement, type ColumnDefinition, type SqlValue } from "../lib/api";
 import { exportFormats, type ExportFormat } from "./export";
 import { blankFilter, filterOps, opTakesValue, type FilterOp, type TableFilter } from "./filters";
@@ -8,31 +8,7 @@ import type { GuardInfo } from "../lib/api";
 import { environmentLabel } from "../lib/environments";
 import type { HistoryEntry } from "./history";
 import { formatDate, plural, t } from "../lib/i18n";
-
-/** Closes a popover when the pointer goes down outside it or Escape is pressed. */
-function useDismiss(open: boolean, onClose: () => void) {
-  const ref = useRef<HTMLDivElement>(null);
-  const onCloseRef = useRef(onClose);
-  useEffect(() => {
-    onCloseRef.current = onClose;
-  });
-  useEffect(() => {
-    if (!open) return undefined;
-    const onPointer = (event: MouseEvent) => {
-      if (ref.current && event.target instanceof Node && !ref.current.contains(event.target)) onCloseRef.current();
-    };
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onCloseRef.current();
-    };
-    window.addEventListener("mousedown", onPointer);
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("mousedown", onPointer);
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
-  return ref;
-}
+import { useDismiss } from "./useDismiss";
 
 export function FilterBar({
   columns,
@@ -133,7 +109,7 @@ export function FilterBar({
 
 export function FilterToggle({ count, open, onToggle }: { count: number; open: boolean; onToggle: () => void }) {
   return (
-    <button type="button" className={open ? "toolbar-button active" : "toolbar-button"} onClick={onToggle}>
+    <button type="button" className={open ? "toolbar-button active" : "toolbar-button"} title={t("panel.filter.toggle")} onClick={onToggle}>
       <Filter size={14} /> {t("panel.filter.toggle")}{count > 0 ? ` (${count})` : ""}
     </button>
   );
@@ -144,7 +120,7 @@ export function ExportMenu({ disabled, onExport }: { disabled: boolean; onExport
   const ref = useDismiss(open, () => setOpen(false));
   return (
     <div className="popover-anchor" ref={ref}>
-      <button type="button" className="toolbar-button" disabled={disabled} onClick={() => setOpen((current) => !current)}>
+      <button type="button" className="toolbar-button" disabled={disabled} title={t("panel.export")} onClick={() => setOpen((current) => !current)}>
         <Download size={14} /> {t("panel.export")}
       </button>
       {open ? (

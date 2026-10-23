@@ -14,6 +14,7 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
+import { ConnectingStatus, type ConnectingState } from "./ConnectingStatus";
 import { errorMessage, type BrowseKind, type ConnectionCatalog, type ConnectionConfig, type DatabaseEngine, type TestResult, type TlsMode } from "../lib/api";
 import { environmentLabel } from "../lib/environments";
 import { SafetyFields } from "./SafetyFields";
@@ -46,6 +47,9 @@ type Props = {
   catalog: ConnectionCatalog;
   busy: boolean;
   error: string | null;
+  /** The connection being opened in this window, shown on its card. */
+  connecting: ConnectingState | null;
+  onCancelConnect: () => void;
   onCreateGroup: (name: string) => Promise<boolean>;
   onDeleteGroup: (name: string) => Promise<void>;
   onDeleteConnection: (id: string) => Promise<void>;
@@ -62,6 +66,8 @@ export function ConnectionHome({
   catalog,
   busy,
   error,
+  connecting,
+  onCancelConnect,
   onCreateGroup,
   onDeleteGroup,
   onDeleteConnection,
@@ -179,10 +185,11 @@ export function ConnectionHome({
             <div className="connection-list">
               {filtered.map((profile) => {
                 const engine = ENGINES.find((item) => item.id === profile.engine);
+                const opening = connecting?.id === profile.id ? connecting : null;
                 return (
                   <div
                     key={profile.id}
-                    className="connection-card-wrap"
+                    className={opening ? "connection-card-wrap opening" : "connection-card-wrap"}
                     onContextMenu={(event) =>
                       openMenu(event, [
                         { label: t("home.menu.connect"), run: () => void onOpen(profile) },
@@ -208,7 +215,8 @@ export function ConnectionHome({
                     <button
                       type="button"
                       className="connection-card"
-                      disabled={busy}
+                      disabled={busy || Boolean(opening)}
+                      aria-busy={Boolean(opening)}
                       onClick={(event) => {
                         if (event.metaKey || event.ctrlKey) onOpenWindow(profile);
                         else void onOpen(profile);
@@ -233,6 +241,7 @@ export function ConnectionHome({
                       </div>
                       <ChevronRight className="chevron" size={18} />
                     </button>
+                    {opening ? <ConnectingStatus state={opening} onCancel={onCancelConnect} /> : null}
                   </div>
                 );
               })}

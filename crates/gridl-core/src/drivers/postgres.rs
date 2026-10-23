@@ -9,9 +9,10 @@ use sqlx::pool::PoolConnection;
 use sqlx::postgres::{
     PgConnectOptions, PgDatabaseError, PgErrorPosition, PgPool, PgPoolOptions, PgRow, PgSslMode,
 };
+use sqlx::postgres::{PgTypeInfo, PgValueFormat};
 use sqlx::{Arguments, Connection, Executor, Postgres, Row, Statement, TypeInfo, ValueRef};
 
-use super::decode::{cap_bytes, cap_text, column_defs, finite_f64};
+use super::decode::{cap_bytes, cap_text, column_defs};
 use super::stream::{emit_chunks, StreamConfig};
 use super::{batch_err, db_err, elapsed_ms};
 use crate::driver::{ChunkSink, DatabaseDriver};
@@ -175,10 +176,14 @@ impl DatabaseDriver for PostgresDriver {
         let keys = primary_keys(&pool, Some((schema, relation.name.as_str()))).await?;
         let enums = enum_labels(&pool).await?;
         let rows = sqlx::query(
-            "SELECT column_name, data_type, udt_schema, udt_name, is_nullable, column_default
-             FROM information_schema.columns
-             WHERE table_schema = $1 AND table_name = $2
-             ORDER BY ordinal_position",
+            "SELECT c.column_name, c.data_type, c.udt_schema, c.udt_name, c.is_nullable, c.column_default,
+                    pg_catalog.format_type(pa.atttypid, pa.atttypmod) AS full_type
+             FROM information_schema.columns c
+             LEFT JOIN pg_catalog.pg_namespace pn ON pn.nspname = c.table_schema
+             LEFT JOIN pg_catalog.pg_class pc ON pc.relnamespace = pn.oid AND pc.relname = c.table_name
+             LEFT JOIN pg_catalog.pg_attribute pa ON pa.attrelid = pc.oid AND pa.attname = c.column_name
+             WHERE c.table_schema = $1 AND c.table_name = $2
+             ORDER BY c.ordinal_position",
         )
         .bind(schema)
         .bind(&relation.name)
@@ -206,11 +211,15 @@ impl DatabaseDriver for PostgresDriver {
         session.set_enums(enums.clone())?;
         let rows = sqlx::query(
             "SELECT c.table_schema, c.table_name, t.table_type,
-                    c.column_name, c.data_type, c.udt_schema, c.udt_name, c.is_nullable, c.column_default
+                    c.column_name, c.data_type, c.udt_schema, c.udt_name, c.is_nullable, c.column_default,
+                    pg_catalog.format_type(pa.atttypid, pa.atttypmod) AS full_type
              FROM information_schema.columns c
              JOIN information_schema.tables t
                ON t.table_schema = c.table_schema
               AND t.table_name = c.table_name
+             LEFT JOIN pg_catalog.pg_namespace pn ON pn.nspname = c.table_schema
+             LEFT JOIN pg_catalog.pg_class pc ON pc.relnamespace = pn.oid AND pc.relname = c.table_name
+             LEFT JOIN pg_catalog.pg_attribute pa ON pa.attrelid = pc.oid AND pa.attname = c.column_name
              WHERE c.table_schema NOT IN ('pg_catalog', 'information_schema')
              ORDER BY c.table_schema, c.table_name, c.ordinal_position",
         )
@@ -432,7 +441,7 @@ async fn run_query(
     enums: &EnumLabels,
     started: Instant,
 ) -> Result<QueryResult, CoreError> {
-    let columns = statement_columns(connection, &request.sql, enums).await?;
+    let columns = statement_columns(connection, &request.sql, &request.params, enums).await?;
     if columns.is_empty() {
         let affected = pg_query(&request.sql, &request.params)?
             .execute(&mut **connection)
@@ -442,7 +451,15 @@ async fn run_query(
         emit_terminal(sink, request).await?;
         return Ok(finished(request, columns, 0, affected, started, false, false));
     }
-    let mut stream = pg_query(&request.sql, &request.params)?.fetch(&mut **connection);
+    // Reads use the simple protocol: PostgreSQL then sends every value as text, printed by the
+    // type's own output function, so any type (extensions included) reads as psql shows it.
+    // Some types (aclitem) cannot be sent in binary at all, and chrono panics on ±infinity.
+    let sql = if request.params.is_empty() {
+        request.sql.clone()
+    } else {
+        inline_params(&request.sql, &request.params)?
+    };
+    let mut stream = sqlx::raw_sql(&sql).fetch(&mut **connection);
     let outcome = emit_chunks(
         &mut stream,
         StreamConfig {
@@ -826,8 +843,18 @@ fn column_from_row(
     let nullable: String = row.try_get("is_nullable").map_err(db_err)?;
     let default_value: Option<String> = row.try_get("column_default").map_err(db_err)?;
     let options = enums.get(&(udt_schema.clone(), udt_name.clone())).cloned().unwrap_or_default();
-    if !options.is_empty() {
+    // format_type spells the declared type in full, as psql shows it: character(5), bit(4),
+    // numeric(12,2), integer[], billing.status. Edits cast to it, so a length must not be lost.
+    let full_type: Option<String> = row.try_get("full_type").map_err(db_err)?;
+    if let Some(full_type) = full_type.filter(|full| !full.is_empty()) {
+        data_type = full_type;
+    } else if !options.is_empty() || data_type == "USER-DEFINED" {
+        // Extension and custom types (hstore, geometry, enums) by their real name.
         data_type = enum_type_name(&udt_schema, &udt_name);
+    } else if data_type == "ARRAY" {
+        // information_schema says only "ARRAY"; udt_name is the element type with a leading underscore.
+        let element = udt_name.strip_prefix('_').unwrap_or(&udt_name);
+        data_type = format!("{}[]", enum_type_name(&udt_schema, element));
     }
     Ok(ColumnDefinition {
         primary_key: keys.contains(&(schema.to_owned(), table.to_owned(), name.clone())),
@@ -897,12 +924,26 @@ fn attach_enum_options(
 async fn statement_columns(
     connection: &mut PoolConnection<Postgres>,
     sql: &str,
+    params: &[SqlValue],
     enums: &EnumLabels,
 ) -> Result<Vec<ColumnDefinition>, CoreError> {
-    let statement = connection.prepare(sql).await.map_err(db_err)?;
+    // Declare the parameters as the types `pg_query` encodes them with. Left to
+    // inference, `id = $1` makes $1 an int4 and the int8 sent later is rejected.
+    let types: Vec<PgTypeInfo> = params.iter().map(param_type).collect();
+    let statement = connection.prepare_with(sql, &types).await.map_err(db_err)?;
     let mut columns = column_defs(statement.columns());
     attach_enum_options(&mut columns, enums);
     Ok(columns)
+}
+
+fn param_type(param: &SqlValue) -> PgTypeInfo {
+    match param {
+        SqlValue::Null | SqlValue::Int(_) => <i64 as sqlx::Type<Postgres>>::type_info(),
+        SqlValue::Bool(_) => <bool as sqlx::Type<Postgres>>::type_info(),
+        SqlValue::Float(_) => <f64 as sqlx::Type<Postgres>>::type_info(),
+        SqlValue::Text(_) => <&str as sqlx::Type<Postgres>>::type_info(),
+        SqlValue::Bytes(_) => <&[u8] as sqlx::Type<Postgres>>::type_info(),
+    }
 }
 
 fn pg_query<'q>(
@@ -937,37 +978,194 @@ fn decode_pg_cell(row: &PgRow, index: usize) -> SqlValue {
         return SqlValue::Null;
     }
     let type_name = raw.type_info().name().to_ascii_uppercase();
-    let decoded = match type_name.as_str() {
-        "BOOL" => row.try_get::<bool, _>(index).ok().map(SqlValue::Bool),
-        "INT2" => row.try_get::<i16, _>(index).ok().map(|value| SqlValue::Int(i64::from(value))),
-        "INT4" | "OID" => {
-            row.try_get::<i32, _>(index).ok().map(|value| SqlValue::Int(i64::from(value)))
+    match (raw.format(), raw.as_bytes().map(std::str::from_utf8)) {
+        (PgValueFormat::Text, Ok(Ok(text))) => decode_pg_text(&type_name, text),
+        // Reads always use the simple protocol, so binary values should not arrive here.
+        _ => SqlValue::Text(format!("<{type_name}>")),
+    }
+}
+
+/// A value in text format, as PostgreSQL's output function wrote it. Numbers and
+/// booleans become typed values so the grid can align and edit them; everything
+/// else is shown exactly as psql would show it.
+fn decode_pg_text(type_name: &str, text: &str) -> SqlValue {
+    match type_name {
+        "BOOL" => match text {
+            "t" => SqlValue::Bool(true),
+            "f" => SqlValue::Bool(false),
+            _ => cap_text(text.to_owned()),
+        },
+        "INT2" | "INT4" | "INT8" | "OID" => {
+            text.parse::<i64>().map_or_else(|_| cap_text(text.to_owned()), SqlValue::Int)
         }
-        "INT8" => row.try_get::<i64, _>(index).ok().map(SqlValue::Int),
-        "FLOAT4" => row.try_get::<f32, _>(index).ok().map(|value| finite_f64(f64::from(value))),
-        "FLOAT8" => row.try_get::<f64, _>(index).ok().map(finite_f64),
-        "BYTEA" => row.try_get::<Vec<u8>, _>(index).ok().map(cap_bytes),
-        "JSON" | "JSONB" => {
-            row.try_get::<serde_json::Value, _>(index).ok().map(|value| cap_text(value.to_string()))
+        "FLOAT4" | "FLOAT8" => match text.parse::<f64>() {
+            Ok(value) if value.is_finite() => SqlValue::Float(value),
+            _ => SqlValue::Text(text.to_owned()),
+        },
+        "BYTEA" => match text.strip_prefix("\\x").and_then(hex_bytes) {
+            Some(bytes) => cap_bytes(bytes),
+            None => cap_text(text.to_owned()),
+        },
+        _ => cap_text(text.to_owned()),
+    }
+}
+
+fn hex_bytes(hex: &str) -> Option<Vec<u8>> {
+    if !hex.len().is_multiple_of(2) {
+        return None;
+    }
+    (0..hex.len()).step_by(2).map(|at| u8::from_str_radix(hex.get(at..at + 2)?, 16).ok()).collect()
+}
+
+/// Writes `$1`, `$2`… as SQL literals so a query with parameters can still run over
+/// the simple protocol and come back as text. Placeholders inside strings, quoted
+/// identifiers, comments, and dollar-quoted bodies are left alone.
+fn inline_params(sql: &str, params: &[SqlValue]) -> Result<String, CoreError> {
+    let chars: Vec<char> = sql.chars().collect();
+    let mut out = String::with_capacity(sql.len());
+    let mut at = 0;
+    while at < chars.len() {
+        let c = chars[at];
+        let next = chars.get(at + 1).copied();
+        match c {
+            '\'' => {
+                let escapes = at > 0
+                    && matches!(chars[at - 1], 'e' | 'E')
+                    && !chars
+                        .get(at.wrapping_sub(2))
+                        .is_some_and(|p| p.is_alphanumeric() || *p == '_');
+                let start = at;
+                at += 1;
+                while at < chars.len() {
+                    if escapes && chars[at] == '\\' {
+                        at += 2;
+                        continue;
+                    }
+                    if chars[at] == '\'' {
+                        if chars.get(at + 1) == Some(&'\'') {
+                            at += 2;
+                            continue;
+                        }
+                        break;
+                    }
+                    at += 1;
+                }
+                at = (at + 1).min(chars.len());
+                out.extend(&chars[start..at]);
+            }
+            '"' => {
+                let start = at;
+                at += 1;
+                while at < chars.len() && !(chars[at] == '"' && chars.get(at + 1) != Some(&'"')) {
+                    at += if chars[at] == '"' { 2 } else { 1 };
+                }
+                at = (at + 1).min(chars.len());
+                out.extend(&chars[start..at]);
+            }
+            '-' if next == Some('-') => {
+                let start = at;
+                while at < chars.len() && chars[at] != '\n' {
+                    at += 1;
+                }
+                out.extend(&chars[start..at]);
+            }
+            '/' if next == Some('*') => {
+                let start = at;
+                let mut depth = 0;
+                while at < chars.len() {
+                    if chars[at] == '/' && chars.get(at + 1) == Some(&'*') {
+                        depth += 1;
+                        at += 2;
+                    } else if chars[at] == '*' && chars.get(at + 1) == Some(&'/') {
+                        depth -= 1;
+                        at += 2;
+                        if depth == 0 {
+                            break;
+                        }
+                    } else {
+                        at += 1;
+                    }
+                }
+                out.extend(&chars[start..at.min(chars.len())]);
+            }
+            '$' => {
+                let follows_word = at > 0
+                    && (chars[at - 1].is_alphanumeric()
+                        || chars[at - 1] == '_'
+                        || chars[at - 1] == '$');
+                if !follows_word && next.is_some_and(|n| n.is_ascii_digit()) {
+                    let start = at + 1;
+                    let mut end = start;
+                    while end < chars.len() && chars[end].is_ascii_digit() {
+                        end += 1;
+                    }
+                    let number: String = chars[start..end].iter().collect();
+                    let index = number
+                        .parse::<usize>()
+                        .ok()
+                        .filter(|n| *n >= 1 && *n <= params.len())
+                        .ok_or_else(|| {
+                            CoreError::Database(tr!(
+                                "there is no parameter ${number}",
+                                "no existe el parámetro ${number}"
+                            ))
+                        })?;
+                    out.push_str(&sql_literal(&params[index - 1]));
+                    at = end;
+                    continue;
+                }
+                // A dollar-quoted body: $tag$ … $tag$.
+                let mut end = at + 1;
+                while end < chars.len() && (chars[end].is_alphanumeric() || chars[end] == '_') {
+                    end += 1;
+                }
+                if !follows_word && chars.get(end) == Some(&'$') {
+                    let tag: String = chars[at..=end].iter().collect();
+                    let body_start = end + 1;
+                    let rest: String = chars[body_start..].iter().collect();
+                    let close = rest.find(&tag).map_or(chars.len(), |offset| {
+                        body_start + rest[..offset].chars().count() + tag.chars().count()
+                    });
+                    out.extend(&chars[at..close]);
+                    at = close;
+                } else {
+                    out.push(c);
+                    at += 1;
+                }
+            }
+            _ => {
+                out.push(c);
+                at += 1;
+            }
         }
-        "UUID" => {
-            row.try_get::<uuid::Uuid, _>(index).ok().map(|value| SqlValue::Text(value.to_string()))
+    }
+    Ok(out)
+}
+
+/// A literal PostgreSQL reads the way it would read the bound value: strings stay
+/// untyped so they take the type the context gives them, exactly like a parameter.
+fn sql_literal(value: &SqlValue) -> String {
+    match value {
+        SqlValue::Null => "NULL".into(),
+        SqlValue::Bool(value) => if *value { "TRUE" } else { "FALSE" }.into(),
+        SqlValue::Int(value) if *value < 0 => format!("({value})"),
+        SqlValue::Int(value) => value.to_string(),
+        SqlValue::Float(value) if value.is_nan() => "'NaN'::float8".into(),
+        SqlValue::Float(value) if value.is_infinite() => {
+            if *value > 0.0 {
+                "'Infinity'::float8".into()
+            } else {
+                "'-Infinity'::float8".into()
+            }
         }
-        _ => None,
-    };
-    if let Some(value) = decoded {
-        return value;
+        SqlValue::Float(value) if *value < 0.0 => format!("({value:?})"),
+        SqlValue::Float(value) => format!("{value:?}"),
+        SqlValue::Text(text) => format!("E'{}'", text.replace('\\', "\\\\").replace('\'', "\\'")),
+        SqlValue::Bytes(bytes) => {
+            let hex: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+            format!("E'\\\\x{hex}'::bytea")
+        }
     }
-    if let Ok(value) = row.try_get::<String, _>(index) {
-        return cap_text(value);
-    }
-    if let Ok(value) = row.try_get::<chrono::NaiveDateTime, _>(index) {
-        return SqlValue::Text(value.to_string());
-    }
-    if let Ok(value) = row.try_get::<chrono::DateTime<chrono::Utc>, _>(index) {
-        return SqlValue::Text(value.to_rfc3339());
-    }
-    SqlValue::Text(format!("<{type_name}>"))
 }
 
 fn finished(
@@ -999,4 +1197,30 @@ async fn emit_terminal(sink: &mut dyn ChunkSink, request: &QueryRequest) -> Resu
         last: true,
     })
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{inline_params, sql_literal};
+    use crate::value::SqlValue;
+
+    #[test]
+    fn inlines_placeholders_outside_strings_comments_and_bodies() {
+        let params = [SqlValue::Int(-5), SqlValue::Text("it's a \\ test".into())];
+        let sql = "select $1, '$1', E'\\'$2', \"$1\", $2 -- $1\n/* $2 /* $1 */ */ $$ $1 $$, $q$ $2 $q$, x$1";
+        assert_eq!(
+            inline_params(sql, &params).expect("inline"),
+            "select (-5), '$1', E'\\'$2', \"$1\", E'it\\'s a \\\\ test' -- $1\n/* $2 /* $1 */ */ $$ $1 $$, $q$ $2 $q$, x$1"
+        );
+        assert!(inline_params("select $3", &params).is_err());
+    }
+
+    #[test]
+    fn literals_read_back_as_the_bound_value() {
+        assert_eq!(sql_literal(&SqlValue::Null), "NULL");
+        assert_eq!(sql_literal(&SqlValue::Bool(true)), "TRUE");
+        assert_eq!(sql_literal(&SqlValue::Float(-1.5)), "(-1.5)");
+        assert_eq!(sql_literal(&SqlValue::Float(f64::NAN)), "'NaN'::float8");
+        assert_eq!(sql_literal(&SqlValue::Bytes(vec![0xde, 0xad])), "E'\\\\xdead'::bytea");
+    }
 }

@@ -482,14 +482,15 @@ async fn run_query(
     started: Instant,
 ) -> Result<QueryResult, CoreError> {
     let described = statement_columns(connection, &request.sql).await?;
-    // Without parameters the statement goes through the text protocol, like
-    // the mysql client, so statements the prepared protocol rejects still run.
-    let binary = !request.params.is_empty();
-    let mut stream = if binary {
-        (&mut **connection).fetch_many(my_query(&request.sql, &request.params)?)
+    // Reads go through the text protocol, like the mysql client: values arrive as
+    // MySQL prints them (DATETIME(3) keeps .500), and statements the prepared
+    // protocol rejects still run. Parameters are written in as literals.
+    let sql = if request.params.is_empty() {
+        request.sql.clone()
     } else {
-        (&mut **connection).fetch_many(request.sql.as_str())
+        inline_params(&request.sql, &request.params)?
     };
+    let mut stream = (&mut **connection).fetch_many(sql.as_str());
 
     let mut rows_affected = 0;
     let first = loop {
@@ -524,7 +525,7 @@ async fn run_query(
             max_rows: request.max_rows,
             cancel: &request.cancel,
         },
-        |row: &MySqlRow| decode_my_row(row, binary),
+        decode_my_row,
         sink,
     )
     .await?;
@@ -982,13 +983,12 @@ fn my_query<'q>(
     Ok(sqlx::query_with(sql, args).persistent(false))
 }
 
-fn decode_my_row(row: &MySqlRow, binary: bool) -> Vec<SqlValue> {
-    (0..row.columns().len()).map(|index| decode_my_cell(row, index, binary)).collect()
+fn decode_my_row(row: &MySqlRow) -> Vec<SqlValue> {
+    (0..row.columns().len()).map(|index| decode_my_cell(row, index)).collect()
 }
 
-/// Decodes one cell. `binary` is true for the prepared protocol, where
-/// temporal values arrive as packed bytes instead of text.
-fn decode_my_cell(row: &MySqlRow, index: usize, binary: bool) -> SqlValue {
+/// Decodes one cell of a text-protocol row.
+fn decode_my_cell(row: &MySqlRow, index: usize) -> SqlValue {
     let raw = match row.try_get_raw(index) {
         Ok(raw) => raw,
         Err(_) => return SqlValue::Text("<unreadable>".into()),
@@ -1012,14 +1012,6 @@ fn decode_my_cell(row: &MySqlRow, index: usize, binary: bool) -> SqlValue {
             row.try_get_unchecked::<f32, _>(index).ok().map(|value| finite_f64(f64::from(value)))
         }
         "DOUBLE" => row.try_get_unchecked::<f64, _>(index).ok().map(finite_f64),
-        "DATE" | "DATETIME" | "TIMESTAMP" if binary => row
-            .try_get_unchecked::<Vec<u8>, _>(index)
-            .ok()
-            .map(|bytes| SqlValue::Text(binary_datetime(packed(&bytes), type_name == "DATE"))),
-        "TIME" if binary => row
-            .try_get_unchecked::<Vec<u8>, _>(index)
-            .ok()
-            .map(|bytes| SqlValue::Text(binary_time(packed(&bytes)))),
         "BINARY" | "VARBINARY" | "TINYBLOB" | "BLOB" | "MEDIUMBLOB" | "LONGBLOB" => {
             row.try_get_unchecked::<Vec<u8>, _>(index).ok().map(bytes_or_text)
         }
@@ -1052,42 +1044,94 @@ fn bytes_or_text(bytes: Vec<u8>) -> SqlValue {
     }
 }
 
-/// Skips the length byte that leads a binary-protocol temporal value.
-fn packed(bytes: &[u8]) -> &[u8] {
-    bytes.get(1..).unwrap_or_default()
-}
-
-/// Formats a binary-protocol DATE, DATETIME, or TIMESTAMP. Zero dates are
-/// sent as an empty value and keep their `0000-00-00` spelling.
-fn binary_datetime(bytes: &[u8], date_only: bool) -> String {
-    let byte = |index: usize| bytes.get(index).copied().unwrap_or(0);
-    let year = u16::from_le_bytes([byte(0), byte(1)]);
-    let mut out = format!("{year:04}-{:02}-{:02}", byte(2), byte(3));
-    if date_only {
-        return out;
+/// Writes each `?` as a SQL literal so a query with parameters still reads over
+/// the text protocol. Placeholders inside strings, quoted identifiers, and
+/// comments are left alone. Text goes in as a hex literal, which reads the same
+/// whatever the server's escaping mode.
+fn inline_params(sql: &str, params: &[SqlValue]) -> Result<String, CoreError> {
+    let chars: Vec<char> = sql.chars().collect();
+    let mut out = String::with_capacity(sql.len());
+    let mut next_param = params.iter();
+    let mut at = 0;
+    while at < chars.len() {
+        let c = chars[at];
+        let next = chars.get(at + 1).copied();
+        match c {
+            '\'' | '"' | '`' => {
+                let start = at;
+                at += 1;
+                while at < chars.len() {
+                    if chars[at] == '\\' && c != '`' {
+                        at += 2;
+                        continue;
+                    }
+                    if chars[at] == c {
+                        if chars.get(at + 1) == Some(&c) {
+                            at += 2;
+                            continue;
+                        }
+                        break;
+                    }
+                    at += 1;
+                }
+                at = (at + 1).min(chars.len());
+                out.extend(&chars[start..at]);
+            }
+            '#' => {
+                let start = at;
+                while at < chars.len() && chars[at] != '\n' {
+                    at += 1;
+                }
+                out.extend(&chars[start..at]);
+            }
+            '-' if next == Some('-') && chars.get(at + 2).is_none_or(|c| c.is_whitespace()) => {
+                let start = at;
+                while at < chars.len() && chars[at] != '\n' {
+                    at += 1;
+                }
+                out.extend(&chars[start..at]);
+            }
+            '/' if next == Some('*') => {
+                let start = at;
+                at += 2;
+                while at < chars.len() && !(chars[at] == '*' && chars.get(at + 1) == Some(&'/')) {
+                    at += 1;
+                }
+                at = (at + 2).min(chars.len());
+                out.extend(&chars[start..at]);
+            }
+            '?' => {
+                let value = next_param.next().ok_or_else(|| {
+                    CoreError::Database(tr!(
+                        "the statement has more ? placeholders than parameters",
+                        "la sentencia tiene más ? que parámetros"
+                    ))
+                })?;
+                out.push_str(&sql_literal(value));
+                at += 1;
+            }
+            _ => {
+                out.push(c);
+                at += 1;
+            }
+        }
     }
-    out.push_str(&format!(" {:02}:{:02}:{:02}", byte(4), byte(5), byte(6)));
-    push_micros(&mut out, u32::from_le_bytes([byte(7), byte(8), byte(9), byte(10)]));
-    out
+    Ok(out)
 }
 
-/// Formats a binary-protocol TIME, which may be negative or exceed 24 hours.
-fn binary_time(bytes: &[u8]) -> String {
-    let byte = |index: usize| bytes.get(index).copied().unwrap_or(0);
-    let negative = byte(0) == 1;
-    let days = u32::from_le_bytes([byte(1), byte(2), byte(3), byte(4)]);
-    let hours = u64::from(days) * 24 + u64::from(byte(5));
-    let sign = if negative { "-" } else { "" };
-    let mut out = format!("{sign}{hours:02}:{:02}:{:02}", byte(6), byte(7));
-    push_micros(&mut out, u32::from_le_bytes([byte(8), byte(9), byte(10), byte(11)]));
-    out
-}
-
-fn push_micros(out: &mut String, micros: u32) {
-    if micros > 0 {
-        let fraction = format!("{micros:06}");
-        out.push('.');
-        out.push_str(fraction.trim_end_matches('0'));
+fn sql_literal(value: &SqlValue) -> String {
+    let hex = |bytes: &[u8]| bytes.iter().map(|byte| format!("{byte:02X}")).collect::<String>();
+    match value {
+        SqlValue::Null => "NULL".into(),
+        SqlValue::Bool(value) => if *value { "TRUE" } else { "FALSE" }.into(),
+        SqlValue::Int(value) if *value < 0 => format!("({value})"),
+        SqlValue::Int(value) => value.to_string(),
+        SqlValue::Float(value) if *value < 0.0 => format!("({value:?})"),
+        SqlValue::Float(value) => format!("{value:?}"),
+        SqlValue::Text(text) if text.is_empty() => "''".into(),
+        SqlValue::Text(text) => format!("_utf8mb4 X'{}'", hex(text.as_bytes())),
+        SqlValue::Bytes(bytes) if bytes.is_empty() => "X''".into(),
+        SqlValue::Bytes(bytes) => format!("X'{}'", hex(bytes)),
     }
 }
 
@@ -1137,15 +1181,14 @@ mod tests {
     }
 
     #[test]
-    fn binary_temporal_values_format_like_text() {
-        assert_eq!(binary_datetime(&[], true), "0000-00-00");
-        assert_eq!(binary_datetime(&[], false), "0000-00-00 00:00:00");
-        assert_eq!(binary_datetime(&[0xE8, 0x07, 3, 9], false), "2024-03-09 00:00:00");
+    fn inlines_placeholders_outside_strings_and_comments() {
+        let params =
+            [SqlValue::Int(-5), SqlValue::Text("it's".into()), SqlValue::Bytes(vec![0xde])];
+        let sql = "select ?, '?', \"?\", `?`, ? # ?\n/* ? */ -- ?\n, 'a\\'?', ?";
         assert_eq!(
-            binary_datetime(&[0xE8, 0x07, 3, 9, 13, 5, 7, 0x40, 0xE2, 0x01, 0x00], false),
-            "2024-03-09 13:05:07.123456"
+            inline_params(sql, &params).expect("inline"),
+            "select (-5), '?', \"?\", `?`, _utf8mb4 X'69742773' # ?\n/* ? */ -- ?\n, 'a\\'?', X'DE'"
         );
-        assert_eq!(binary_time(&[1, 1, 0, 0, 0, 2, 3, 4]), "-26:03:04");
-        assert_eq!(binary_time(&[]), "00:00:00");
+        assert!(inline_params("select ?, ?, ?, ?", &params).is_err());
     }
 }

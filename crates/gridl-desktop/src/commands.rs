@@ -254,7 +254,7 @@ pub async fn connect(
             return Err(format!("{}{owner}", crate::windows::FOCUSED_PREFIX));
         }
     }
-    let response = open_connection(&app, &state, request).await.map_err(fail)?;
+    let response = open_connection(&app, &state, request, window.label()).await.map_err(fail)?;
     state.set_owner(&connection_id, window.label());
     Ok(response)
 }
@@ -498,10 +498,14 @@ pub(crate) fn export_path(path: &str) -> Result<PathBuf, String> {
     Ok(path)
 }
 
+/// Tells the window which step a slow connect is on: "schema" once the server answered.
+const CONNECT_PROGRESS: &str = "gridl-connect-progress";
+
 async fn open_connection(
     app: &AppHandle,
     state: &AppState,
     mut request: ConnectRequest,
+    window: &str,
 ) -> Result<ConnectResponse, CoreError> {
     request.config = request.config.prepare()?;
     let secret =
@@ -534,6 +538,7 @@ async fn open_connection(
         state.insert_tunnel(id.as_str(), tunnel);
     }
     state.track(&id, request.config.clone(), link.endpoint.clone())?;
+    crate::windows::emit_to_window(app, window, CONNECT_PROGRESS, "schema");
     let tables = match driver.introspect(&id).await {
         Ok(tables) => tables,
         Err(err) => {
