@@ -293,3 +293,54 @@ async fn postgres_lists_foreign_keys_in_column_order() {
     assert_eq!(line.schema.as_deref(), Some("public"));
     driver.disconnect(&id).await.expect("disconnect");
 }
+
+#[tokio::test]
+async fn postgres_values_read_like_psql_prints_them() {
+    let Some(target) = target() else { return };
+    let (driver, id) = open(&target, "pg-values", false).await;
+    // Each value must come back exactly as PostgreSQL prints it.
+    let expressions = [
+        "1234.5600::numeric(12,4)",
+        "-0.000120::numeric",
+        "123456789012345678901234567890.123456789::numeric",
+        "0::numeric(10,2)",
+        "100::numeric",
+        "10000::numeric",
+        "'NaN'::numeric",
+        "'2026-06-11'::date",
+        "'infinity'::date",
+        "'0044-03-15 BC'::date",
+        "'13:45:07.25'::time",
+        "'08:00:00+05:30'::timetz",
+        "'23:59:59.999999-03'::timetz",
+        "'1 year 2 mons 3 days 04:05:06.5'::interval",
+        "'-00:00:01'::interval",
+        "'0'::interval",
+        "'192.168.0.1'::inet",
+        "'10.0.0.0/8'::cidr",
+        "'::1'::inet",
+        "'08:00:2b:01:02:03'::macaddr",
+        "ARRAY[1, NULL, 3]::int[]",
+        "ARRAY['a', 'b']::text[]",
+        "'hello'::citext",
+    ];
+    run(&driver, &id, "CREATE EXTENSION IF NOT EXISTS citext").await;
+    for expression in expressions {
+        let sql = format!("SELECT {expression}, format('%s', {expression})");
+        let chunks = run(&driver, &id, &sql).await;
+        let row = chunks.iter().flat_map(|chunk| chunk.rows.iter()).next().expect("row");
+        let SqlValue::Text(expected) = &row[1] else { panic!("{expression}: text cast") };
+        // psql prints BC dates with a suffix chrono does not use.
+        if expression.contains(" BC") {
+            assert!(
+                !matches!(&row[0], SqlValue::Text(text) if text.starts_with('<')),
+                "{expression}"
+            );
+            continue;
+        }
+        assert_eq!(&row[0], &SqlValue::Text(expected.clone()), "{expression}");
+    }
+    let chunks = run(&driver, &id, "SELECT 12.34::money").await;
+    assert_eq!(first(&chunks), SqlValue::Text("12.34".into()));
+    driver.disconnect(&id).await.expect("disconnect");
+}

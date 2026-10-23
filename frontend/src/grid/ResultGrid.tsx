@@ -726,6 +726,8 @@ export function ResultGrid({
     const [col, row] = cell;
     const draftIndex = row - rowCount;
     const drafting = draftIndex >= 0 && draftIndex < shownInserts.length;
+    // A row that has not arrived yet is not a NULL; draw it as loading.
+    if (!drafting && rowsRef.current?.[row] === undefined) return { kind: GridCellKind.Loading, allowOverlay: false };
     const marked = removedSet.has(row);
     const editedRow = drafting ? undefined : shownEdits?.[row];
     const original = rowsRef.current?.[row]?.[col];

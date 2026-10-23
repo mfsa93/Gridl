@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use futures_util::future::{select, Either};
 use sqlx::pool::PoolConnection;
+use sqlx::postgres::types::{PgInterval, PgMoney};
 use sqlx::postgres::{
     PgConnectOptions, PgDatabaseError, PgErrorPosition, PgPool, PgPoolOptions, PgRow, PgSslMode,
 };
@@ -953,6 +954,26 @@ fn decode_pg_cell(row: &PgRow, index: usize) -> SqlValue {
         "UUID" => {
             row.try_get::<uuid::Uuid, _>(index).ok().map(|value| SqlValue::Text(value.to_string()))
         }
+        "NUMERIC" => raw.as_bytes().ok().and_then(numeric_text).map(SqlValue::Text),
+        "DATE" => raw.as_bytes().ok().and_then(date_text).map(SqlValue::Text),
+        "TIME" => raw.as_bytes().ok().and_then(time_text).map(SqlValue::Text),
+        "TIMETZ" => raw.as_bytes().ok().and_then(time_tz_text).map(SqlValue::Text),
+        "INTERVAL" => row
+            .try_get::<PgInterval, _>(index)
+            .ok()
+            .map(|value| SqlValue::Text(interval_text(&value))),
+        "MONEY" => {
+            row.try_get::<PgMoney, _>(index).ok().map(|value| SqlValue::Text(money_text(value.0)))
+        }
+        "INET" | "CIDR" => raw.as_bytes().ok().and_then(inet_text).map(SqlValue::Text),
+        "MACADDR" | "MACADDR8" => raw.as_bytes().ok().map(|bytes| {
+            SqlValue::Text(
+                bytes.iter().map(|byte| format!("{byte:02x}")).collect::<Vec<_>>().join(":"),
+            )
+        }),
+        name if name.ends_with("[]") || name.starts_with('_') => {
+            array_text(row, index).map(cap_text)
+        }
         _ => None,
     };
     if let Some(value) = decoded {
@@ -967,7 +988,176 @@ fn decode_pg_cell(row: &PgRow, index: usize) -> SqlValue {
     if let Ok(value) = row.try_get::<chrono::DateTime<chrono::Utc>, _>(index) {
         return SqlValue::Text(value.to_rfc3339());
     }
+    // Enums, domains over text, citext, and xml travel as plain UTF-8 even in binary format.
+    if let Ok(Ok(text)) = raw.as_bytes().map(std::str::from_utf8) {
+        if !text.chars().any(|c| c.is_control() && !c.is_whitespace()) {
+            return cap_text(text.to_owned());
+        }
+    }
     SqlValue::Text(format!("<{type_name}>"))
+}
+
+/// Arrays of the common element types, written the way psql prints them.
+fn array_text(row: &PgRow, index: usize) -> Option<String> {
+    fn join<T: ToString>(items: Vec<Option<T>>) -> String {
+        let items: Vec<String> = items
+            .into_iter()
+            .map(|item| item.map_or_else(|| "NULL".into(), |item| item.to_string()))
+            .collect();
+        format!("{{{}}}", items.join(","))
+    }
+    row.try_get::<Vec<Option<String>>, _>(index)
+        .map(join)
+        .or_else(|_| row.try_get::<Vec<Option<i64>>, _>(index).map(join))
+        .or_else(|_| row.try_get::<Vec<Option<i32>>, _>(index).map(join))
+        .or_else(|_| row.try_get::<Vec<Option<i16>>, _>(index).map(join))
+        .or_else(|_| row.try_get::<Vec<Option<f64>>, _>(index).map(join))
+        .or_else(|_| row.try_get::<Vec<Option<f32>>, _>(index).map(join))
+        .or_else(|_| row.try_get::<Vec<Option<bool>>, _>(index).map(join))
+        .or_else(|_| row.try_get::<Vec<Option<uuid::Uuid>>, _>(index).map(join))
+        .or_else(|_| row.try_get::<Vec<Option<chrono::NaiveDate>>, _>(index).map(join))
+        .or_else(|_| row.try_get::<Vec<Option<chrono::NaiveDateTime>>, _>(index).map(join))
+        .or_else(|_| {
+            row.try_get::<Vec<Option<chrono::DateTime<chrono::Utc>>>, _>(index).map(|items| {
+                join(items.into_iter().map(|item| item.map(|value| value.to_rfc3339())).collect())
+            })
+        })
+        .ok()
+}
+
+/// NUMERIC in binary format: base-10000 digits with a weight, a sign, and a display scale.
+/// Decoded by hand so any precision prints exactly as PostgreSQL would.
+fn numeric_text(bytes: &[u8]) -> Option<String> {
+    let word = |at: usize| bytes.get(at..at + 2).map(|pair| u16::from_be_bytes([pair[0], pair[1]]));
+    let ndigits = usize::from(word(0)?);
+    let weight = i32::from(word(2)? as i16);
+    let sign = word(4)?;
+    let dscale = usize::from(word(6)?);
+    match sign {
+        0xC000 => return Some("NaN".into()),
+        0xD000 => return Some("Infinity".into()),
+        0xF000 => return Some("-Infinity".into()),
+        _ => {}
+    }
+    let digits = (0..ndigits).map(|i| word(8 + i * 2)).collect::<Option<Vec<u16>>>()?;
+    let digit = |i: i32| usize::try_from(i).ok().and_then(|i| digits.get(i)).copied().unwrap_or(0);
+    let mut text = String::new();
+    if sign == 0x4000 {
+        text.push('-');
+    }
+    if weight < 0 {
+        text.push('0');
+    } else {
+        for i in 0..=weight {
+            if i == 0 {
+                text.push_str(&digit(i).to_string());
+            } else {
+                text.push_str(&format!("{:04}", digit(i)));
+            }
+        }
+    }
+    if dscale > 0 {
+        let mut fraction = String::new();
+        let mut i = weight + 1;
+        while fraction.len() < dscale {
+            fraction.push_str(&format!("{:04}", digit(i)));
+            i += 1;
+        }
+        fraction.truncate(dscale);
+        text.push('.');
+        text.push_str(&fraction);
+    }
+    Some(text)
+}
+
+/// DATE in binary format is days since 2000-01-01, with the extremes meaning ±infinity.
+fn date_text(bytes: &[u8]) -> Option<String> {
+    let days = i32::from_be_bytes(bytes.try_into().ok()?);
+    match days {
+        i32::MAX => Some("infinity".into()),
+        i32::MIN => Some("-infinity".into()),
+        _ => chrono::NaiveDate::from_ymd_opt(2000, 1, 1)?
+            .checked_add_signed(chrono::Duration::days(i64::from(days)))
+            .map(|date| date.to_string()),
+    }
+}
+
+/// Matches PostgreSQL's default `postgres` interval style: `1 year 2 mons 3 days 04:05:06.5`.
+fn interval_text(value: &PgInterval) -> String {
+    let mut parts = Vec::new();
+    let (years, months) = (value.months / 12, value.months % 12);
+    let unit = |count: i32, one: &str, many: &str| {
+        format!("{count} {}", if count.abs() == 1 { one } else { many })
+    };
+    if years != 0 {
+        parts.push(unit(years, "year", "years"));
+    }
+    if months != 0 {
+        parts.push(unit(months, "mon", "mons"));
+    }
+    if value.days != 0 {
+        parts.push(unit(value.days, "day", "days"));
+    }
+    if value.microseconds != 0 || parts.is_empty() {
+        let sign = if value.microseconds < 0 { "-" } else { "" };
+        parts.push(format!("{sign}{}", clock(value.microseconds.unsigned_abs())));
+    }
+    parts.join(" ")
+}
+
+/// `HH:MM:SS` plus as many fractional digits as are not zero, like PostgreSQL.
+fn clock(micros: u64) -> String {
+    let (seconds, fraction) = (micros / 1_000_000, micros % 1_000_000);
+    let mut text = format!("{:02}:{:02}:{:02}", seconds / 3600, seconds / 60 % 60, seconds % 60);
+    if fraction != 0 {
+        text.push('.');
+        text.push_str(format!("{fraction:06}").trim_end_matches('0'));
+    }
+    text
+}
+
+/// TIME in binary format is microseconds since midnight.
+fn time_text(bytes: &[u8]) -> Option<String> {
+    let micros = i64::from_be_bytes(bytes.get(..8)?.try_into().ok()?);
+    Some(clock(u64::try_from(micros).ok()?))
+}
+
+/// TIMETZ adds the zone's offset in seconds west of UTC, printed as `+05:30` or `-03`.
+fn time_tz_text(bytes: &[u8]) -> Option<String> {
+    let mut text = time_text(bytes)?;
+    let west = i32::from_be_bytes(bytes.get(8..12)?.try_into().ok()?);
+    let east = west.checked_neg()?;
+    let offset = east.unsigned_abs();
+    text.push(if east < 0 { '-' } else { '+' });
+    text.push_str(&format!("{:02}", offset / 3600));
+    if offset % 3600 != 0 {
+        text.push_str(&format!(":{:02}", offset / 60 % 60));
+    }
+    if offset % 60 != 0 {
+        text.push_str(&format!(":{:02}", offset % 60));
+    }
+    Some(text)
+}
+
+/// MONEY is a count of cents; the currency symbol depends on the server's locale, so leave it out.
+fn money_text(cents: i64) -> String {
+    let sign = if cents < 0 { "-" } else { "" };
+    let cents = cents.unsigned_abs();
+    format!("{sign}{}.{:02}", cents / 100, cents % 100)
+}
+
+/// INET and CIDR in binary format: family, prefix bits, a cidr flag, and the address bytes.
+fn inet_text(bytes: &[u8]) -> Option<String> {
+    let (&family, rest) = bytes.split_first()?;
+    let (&bits, rest) = rest.split_first()?;
+    let (&is_cidr, rest) = rest.split_first()?;
+    let (_, address) = rest.split_first()?;
+    let (text, max) = match family {
+        2 => (std::net::Ipv4Addr::from(<[u8; 4]>::try_from(address).ok()?).to_string(), 32),
+        3 => (std::net::Ipv6Addr::from(<[u8; 16]>::try_from(address).ok()?).to_string(), 128),
+        _ => return None,
+    };
+    Some(if is_cidr == 1 || bits != max { format!("{text}/{bits}") } else { text })
 }
 
 fn finished(
