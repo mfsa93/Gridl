@@ -2,7 +2,10 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import "@glideapps/glide-data-grid/dist/index.css";
 import { App } from "./App";
+import { locale, t } from "./lib/i18n";
 import "./styles.css";
+
+document.documentElement.lang = locale;
 
 // The macOS window has an overlay title bar and sidebar vibrancy (see tauri.conf.json).
 const isTauri = "__TAURI_INTERNALS__" in window;
@@ -22,7 +25,7 @@ window.addEventListener("contextmenu", (event) => {
 
 const root = document.getElementById("root");
 if (!root) {
-  throw new Error("No se encontró #root");
+  throw new Error(t("error.noRoot"));
 }
 
 createRoot(root).render(

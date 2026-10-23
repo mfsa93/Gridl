@@ -9,7 +9,8 @@ import { UpdateCenter } from "./home/UpdateCenter";
 import { toConfig, type Draft } from "./home/draft";
 import { cancelQuery, connect, createGroup, deleteGroup, deleteProfile, disconnect, errorMessage, checkSql, defaultSafety, executeBatch, GuardError, executeQuery, exportQuery, importCsv, backupDatabase, restoreDatabase, formatSqlValue, introspect, listForeignKeys, listProfiles, closeDiscarding, listenHere, openConnectionWindow, quitDiscarding, setUnsaved, qualifiedName, quoteIdent, saveConnection, setDialect, testConnection, writeExport, type BatchStatement, type BrowseKind, type ColumnDefinition, type ConnectionCatalog, type ConnectionConfig, type DatabaseEngine, type ForeignKey, type GuardInfo, type SqlValue, type TableSchema, type TestResult } from "./lib/api";
 import { canEditRows, createSchemaSql, createTableSql, deleteSql, dropSchemaSql, insertSql, listSchemasSql, primaryKeys, renameSchemaSql, rowRecord, schemaNameFrom, updateSql, type ColumnDraft } from "./workspace/changes";
-import { describeError, isConnectionLost, type ShownError } from "./lib/errors";
+import { CodedError, describeError, errorCode, isConnectionLost, type ShownError } from "./lib/errors";
+import { formatNumber, formatTime, plural, t } from "./lib/i18n";
 import { ConfirmDialog, NameDialog, TableDialog } from "./workspace/dialogs";
 import { exportRows, sqlLiteral, toTsv, type ExportFormat } from "./workspace/export";
 import { nextSort, orderClause, whereClause, type TableFilter } from "./workspace/filters";
@@ -20,7 +21,7 @@ import { ImportDialog, type ImportPlan } from "./workspace/ImportDialog";
 import { RelationsPanel } from "./workspace/RelationsPanel";
 import { findTable, keyForColumn, outgoingKeys, incomingKeys, refLabel, resolvedRefColumns } from "./workspace/relations";
 import { StructureEditor } from "./workspace/StructureEditor";
-import { kindLabel, pageSizes, sqlTabId, countValue, clonePending, pendingEmpty, viewKey, viewLabel, primaryKeyList, emptyView, tableTabId, showsRows, objectGroups, schemaMap, describePending, describeTabChanges, pastedRow, isHeaderRow, mergeColumns, structureKey, sameDisplayedRow, fieldsFromValues, fieldsFromDraft, namesFromTables, type TableQuery, type TablePage, type TabView, type TableTab, type PendingChanges, type PageStash, type UndoEntry, type WorkspaceDialog } from "./workspace/model";
+import { kindLabel, pageSizes, sqlTabId, countValue, clonePending, pendingEmpty, viewKey, viewLabel, primaryKeyList, emptyView, tableTabId, showsRows, objectGroups, schemaMap, describeTabChanges, pendingSummary, pastedRow, isHeaderRow, mergeColumns, structureKey, sameDisplayedRow, fieldsFromValues, fieldsFromDraft, namesFromTables, type TableQuery, type TablePage, type TabView, type TableTab, type PendingChanges, type PageStash, type UndoEntry, type WorkspaceDialog } from "./workspace/model";
 import { sessionKey, workspaceTabs, readSession, writeSession, matchTabs, readPaneWidth, readResultsHeight, clampResults, clampPane, paneLimit } from "./workspace/session";
 import { PaneSplitter, TablePager, TreeBranch, ObjectIcon, TableLeaf } from "./workspace/chrome";
 
@@ -28,7 +29,7 @@ const emptyCatalog: ConnectionCatalog = { groups: [], profiles: [] };
 /** Stable empties so the grid does not repaint because of a fresh `[]`. */
 const NO_ROWS: SqlValue[][] = [];
 const NO_INDEXES: number[] = [];
-/** Rows the editor keeps by default; "Cargar más" raises it step by step. */
+/** Rows the editor keeps by default; "Load up to" raises it step by step. */
 const editorRowSteps = [10_000, 100_000, 1_000_000];
 /** Statements safe to run again to fetch more rows. */
 const rerunnable = /^\s*(select|with|show|explain|values|table|describe|desc|pragma)\b/i;
@@ -58,7 +59,7 @@ export function App() {
   const [sqlSeed, setSqlSeed] = useState("");
   const [tablePane, setTablePane] = useState<"rows" | "structure">("rows");
   const [views, setViews] = useState<Record<string, TabView>>({
-    [sqlTabId]: emptyView("Ejecuta una consulta o elige una tabla."),
+    [sqlTabId]: emptyView(t("app.empty.start")),
   });
   const [running, setRunning] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -103,7 +104,7 @@ export function App() {
       return await run(false);
     } catch (caught) {
       if (!(caught instanceof GuardError) || caught.info.mode !== "confirm") throw caught;
-      if (!(await askGuard(caught.info))) throw new Error("No se ejecutó: falta tu autorización.", { cause: caught });
+      if (!(await askGuard(caught.info))) throw new CodedError("not-authorized", t("error.notAuthorized"), { cause: caught });
       return run(true);
     }
   }, [askGuard]);
@@ -180,7 +181,7 @@ export function App() {
     setDialog(null);
     setFormError(null);
     setActiveTabId(sqlTabId);
-    setViews({ [sqlTabId]: emptyView("Ejecuta una consulta o elige una tabla.") });
+    setViews({ [sqlTabId]: emptyView(t("app.empty.start")) });
   };
   const schema = useMemo(() => schemaMap(tables), [tables]);
   const checker = useMemo(() => {
@@ -226,7 +227,7 @@ export function App() {
       }
       if (kind !== "new-connection" && kind !== "new-group") return;
       void (async () => {
-        if (!(await confirmDiscardRef.current({ action: "Salir de esta conexión" }))) return;
+        if (!(await confirmDiscardRef.current({ action: t("app.discard.leaveConnection") }))) return;
         setInTransaction(false);
         const current = activeRef.current;
         if (current) {
@@ -252,7 +253,7 @@ export function App() {
         setDialog(null);
         setFormError(null);
         setActiveTabId(sqlTabId);
-        setViews({ [sqlTabId]: emptyView("Ejecuta una consulta o elige una tabla.") });
+        setViews({ [sqlTabId]: emptyView(t("app.empty.start")) });
         setRunning(false);
         setScreen("home");
         setHomeCommand({ nonce: commandNonce.current, kind });
@@ -287,8 +288,8 @@ export function App() {
   const browse = async (kind: BrowseKind) => {
     const filters = {
       sqlite: [{ name: "SQLite", extensions: ["sqlite", "sqlite3", "db"] }],
-      certificate: [{ name: "Certificado", extensions: ["crt", "pem", "cer"] }],
-      key: [{ name: "Llave", extensions: ["pem", "key"] }],
+      certificate: [{ name: t("app.browse.certificate"), extensions: ["crt", "pem", "cer"] }],
+      key: [{ name: t("app.browse.key"), extensions: ["pem", "key"] }],
     }[kind];
     const selected = await open({ multiple: false, directory: false, filters });
     return typeof selected === "string" ? selected : null;
@@ -320,7 +321,7 @@ export function App() {
     setFormError(null);
     setActiveTabId(nextTab);
     setSelectedTable(tabs.find((tab) => tab.id === nextTab)?.table ?? null);
-    setViews({ [sqlTabId]: emptyView("Ejecuta una consulta o elige una tabla.") });
+    setViews({ [sqlTabId]: emptyView(t("app.empty.start")) });
     setSqlSeed(saved?.sql ?? "");
     pendingLoads.current = tabs.filter((tab) => showsRows(tab.table)).map((tab) => tab.table);
     setDbSchemas(namesFromTables(nextTables));
@@ -446,24 +447,24 @@ export function App() {
       setViews((current) => {
         const next = { ...current };
         for (const [id, view] of Object.entries(next)) {
-          if (view.error && isConnectionLost(view.error.message)) next[id] = { ...view, error: null, status: "Reconectado" };
+          if (view.error && isConnectionLost(view.error.message)) next[id] = { ...view, error: null, status: t("app.reconnect.done") };
         }
         return next;
       });
       setFormError(null);
       return true;
     } catch (caught) {
-      setFormError(`No se pudo reconectar: ${errorMessage(caught)}. Si la contraseña no está guardada, vuelve a Conexiones y ábrela de nuevo.`);
+      setFormError(t("app.reconnect.failed", { error: errorMessage(caught) }));
       return false;
     } finally {
       setReconnecting(false);
     }
   };
   const reconnectAction = (error: ShownError | null | undefined) =>
-    error && isConnectionLost(error.message) ? { label: "Reconectar", busy: reconnecting, run: () => void reconnectRef.current() } : null;
+    error && isConnectionLost(error.message) ? { label: t("app.reconnect.action"), busy: reconnecting, run: () => void reconnectRef.current() } : null;
 
   const goHome = async () => {
-    if (!(await confirmDiscardRef.current({ action: "Volver a Conexiones" }))) return;
+    if (!(await confirmDiscardRef.current({ action: t("app.discard.backToConnections") }))) return;
     setInTransaction(false);
     if (active) saveWorkspace(active.id);
     const queryId = activeQuery.current;
@@ -557,7 +558,7 @@ export function App() {
     if (statements.length === 0) {
       setViews((current) => ({
         ...current,
-        [tabId]: { ...(current[tabId] ?? emptyView()), status: "Selecciona un comando o escribe SQL." },
+        [tabId]: { ...(current[tabId] ?? emptyView()), status: t("app.status.noSql") },
       }));
       return;
     }
@@ -583,7 +584,7 @@ export function App() {
         activeQuery.current = thisQuery;
         rows.length = 0;
         const prefix = total > 1 ? `${index + 1}/${total} · ` : "";
-        setViews((current) => ({ ...current, [tabId]: { columns: [], rowCount: 0, status: `${prefix}Ejecutando…`, error: null, pending: true, ran: true } }));
+        setViews((current) => ({ ...current, [tabId]: { columns: [], rowCount: 0, status: `${prefix}${t("app.status.running")}`, error: null, pending: true, ran: true } }));
         const execute = (authorized: boolean) => executeQuery(
           { connectionId, queryId: thisQuery, sql: statement, params: [], chunkRows: 500, authorized, maxRows },
           (chunk) => {
@@ -601,7 +602,7 @@ export function App() {
             result = await execute(scriptAuthorized);
           } catch (caught) {
             if (!(caught instanceof GuardError) || caught.info.mode !== "confirm") throw caught;
-            if (!(await askGuard(caught.info, total - index > 1))) throw new Error("No se ejecutó: falta tu autorización.", { cause: caught });
+            if (!(await askGuard(caught.info, total - index > 1))) throw new CodedError("not-authorized", t("error.notAuthorized"), { cause: caught });
             scriptAuthorized = true;
             result = await execute(true);
           }
@@ -609,7 +610,7 @@ export function App() {
           setHistory(pushHistory(connectionId, { sql: statement, at: Date.now(), durationMs: null, ok: false }));
           failedSql = statement;
           if (total === 1) throw caught;
-          throw new Error(`Sentencia ${index + 1} de ${total}: ${errorMessage(caught)}`, { cause: caught });
+          throw new Error(t("app.error.statement", { index: index + 1, total, error: errorMessage(caught) }), { cause: caught });
         }
         setHistory(pushHistory(connectionId, { sql: statement, at: Date.now(), durationMs: result.durationMs, ok: true }));
         affected += result.rowsAffected;
@@ -621,13 +622,13 @@ export function App() {
       if (!result) return;
       const finalResult = result;
       const notes = [
-        finalResult.cancelled ? "cancelada" : null,
-        finalResult.truncated ? `se muestran las primeras ${maxRows.toLocaleString("es")} filas` : null,
+        finalResult.cancelled ? t("app.status.cancelled") : null,
+        finalResult.truncated ? t("app.status.truncated", { count: formatNumber(maxRows) }) : null,
       ].filter((note) => note !== null);
       const returnsRows = finalResult.columns.length > 0 || finalResult.rowCount > 0;
       const headline = total > 1
-        ? `${total} sentencias · ${returnsRows ? `${finalResult.rowCount} filas en la última` : `${affected} filas afectadas`}`
-        : returnsRows ? `${finalResult.rowCount} filas` : `${finalResult.rowsAffected} filas afectadas`;
+        ? `${plural("app.status.statements", total)} · ${returnsRows ? plural("app.status.rowsInLast", finalResult.rowCount) : plural("app.status.rowsAffected", affected)}`
+        : returnsRows ? plural("common.rows", finalResult.rowCount) : plural("app.status.rowsAffected", finalResult.rowsAffected);
       const duration = total > 1 ? Math.round(performance.now() - started) : finalResult.durationMs;
       const status = `${headline} · ${duration} ms${notes.length ? ` · ${notes.join(" · ")}` : ""}`;
       const lastStatement = statements[total - 1] ?? "";
@@ -649,11 +650,11 @@ export function App() {
       }));
     } catch (caught) {
       if (activeQuery.current === queryId) {
-        const shown = describeError(errorMessage(caught), failedSql, active.engine);
-        const at = new Date().toLocaleTimeString("es");
+        const shown = describeError(caught, failedSql, active.engine);
+        const at = formatTime(new Date());
         setViews((current) => ({
           ...current,
-          [tabId]: { columns: [], rowCount: 0, status: `Error · ${at}`, error: shown, pending: false, ran: true },
+          [tabId]: { columns: [], rowCount: 0, status: t("app.status.errorAt", { time: at }), error: shown, pending: false, ran: true },
         }));
       }
     } finally {
@@ -672,7 +673,7 @@ export function App() {
     try {
       editorRef.current?.format();
     } catch (caught) {
-      setStatus(sqlTabId, `No se pudo formatear: ${errorMessage(caught)}`);
+      setStatus(sqlTabId, t("app.status.formatFailed", { error: errorMessage(caught) }));
     }
   };
 
@@ -683,7 +684,7 @@ export function App() {
 
   const queryQueue = useRef(Promise.resolve());
   const collectQuery = useCallback(async (sql: string, chunkRows = 100) => {
-    if (!active) throw new Error("No hay una conexión activa");
+    if (!active) throw new Error(t("app.error.noConnection"));
     const connectionId = active.id;
     const run = async () => {
       let result: Awaited<ReturnType<typeof executeQuery>> | null = null;
@@ -705,10 +706,10 @@ export function App() {
         );
         if (Number(result.rowCount) <= rows.length) break;
       }
-      if (!result) throw new Error("La consulta no devolvió resultado");
+      if (!result) throw new Error(t("app.error.noResult"));
       if (columns.length === 0) columns = result.columns;
       if (Number(result.rowCount) > rows.length) {
-        throw new Error(`Llegaron ${rows.length} de ${result.rowCount} filas`);
+        throw new Error(t("app.error.partialRows", { received: formatNumber(rows.length), total: formatNumber(Number(result.rowCount)) }));
       }
       return { result, rows, columns };
     };
@@ -745,7 +746,7 @@ export function App() {
     runningTab.current = id;
     setViews((current) => ({
       ...current,
-      [id]: { ...(current[id] ?? emptyView()), status: "Contando filas…", error: null },
+      [id]: { ...(current[id] ?? emptyView()), status: t("app.status.countingRows"), error: null },
     }));
     setRunning(true);
     try {
@@ -760,7 +761,7 @@ export function App() {
       const offset = nextPage * size;
       setViews((current) => ({
         ...current,
-        [id]: { ...(current[id] ?? emptyView()), status: "Cargando…" },
+        [id]: { ...(current[id] ?? emptyView()), status: t("app.status.loading") },
       }));
       const loaded = await collectQuery(
         `select * from ${qualifiedName(table)}${where}${order} limit ${size} offset ${offset}`,
@@ -773,8 +774,8 @@ export function App() {
       const from = total === 0 ? 0 : offset + 1;
       const to = offset + loaded.rows.length;
       const range = total === 0
-        ? where ? "Ninguna fila cumple el filtro" : "0 filas"
-        : `${from.toLocaleString("es")}–${to.toLocaleString("es")} de ${total.toLocaleString("es")}`;
+        ? where ? t("app.status.noMatches") : plural("common.rows", 0)
+        : t("app.status.range", { from: formatNumber(from), to: formatNumber(to), total: formatNumber(total) });
       const columns = mergeColumns(loaded.columns, table);
       setViews((current) => ({
         ...current,
@@ -808,10 +809,10 @@ export function App() {
         }
       }
       if (runningTab.current === id) {
-        const shown = describeError(errorMessage(caught), null, active.engine);
+        const shown = describeError(caught, null, active.engine);
         setViews((current) => ({
           ...current,
-          [id]: { ...(current[id] ?? emptyView()), status: "Error", error: shown },
+          [id]: { ...(current[id] ?? emptyView()), status: t("app.status.error"), error: shown },
         }));
       }
     } finally {
@@ -905,7 +906,7 @@ export function App() {
     if (!showsRows(table)) {
       setViews((current) => ({
         ...current,
-        [id]: emptyView(table.definition ? "" : "Sin definición."),
+        [id]: emptyView(table.definition ? "" : t("app.definition.none")),
       }));
       return;
     }
@@ -947,7 +948,7 @@ export function App() {
   };
 
   const closeTable = async (id: string) => {
-    if (!(await confirmDiscardRef.current({ tab: id, action: "Cerrar la pestaña" }))) return;
+    if (!(await confirmDiscardRef.current({ tab: id, action: t("app.discard.closeTab") }))) return;
     setTableTabs((current) => current.filter((tab) => tab.id !== id));
     setActiveTabId((current) => (current === id ? sqlTabId : current));
     forgetTab(id);
@@ -993,7 +994,7 @@ export function App() {
       <>
         {!needle || tableRows.length > 0 ? (
           <TreeBranch
-            label="Tablas"
+            label={t("app.explorer.tables")}
             depth={groupDepth}
             icon={<Folder size={14} />}
             open={branchOpen(tableKey, true)}
@@ -1002,7 +1003,7 @@ export function App() {
               <button
                 type="button"
                 className="tiny-icon"
-                aria-label="Nueva tabla"
+                aria-label={t("app.explorer.newTable")}
                 disabled={structureLocked || running || (engine === "postgres" && !schema)}
                 onClick={() => {
                   if (schema) setSchemaChoice(schema);
@@ -1291,7 +1292,7 @@ export function App() {
       try {
         statements.push(updateSql(engine, table, rowRecord(columns, original), fieldsFromValues(columns, values)));
       } catch (caught) {
-        if (errorMessage(caught) === "No hay cambios") continue;
+        if (errorCode(caught) === "no-changes") continue;
         throw caught;
       }
     }
@@ -1400,7 +1401,7 @@ export function App() {
       }));
       setImporting(null);
       await reloadOpenTable(job.table);
-      setStatus(job.tab, `${done.rows.toLocaleString("es")} filas importadas · ${done.durationMs} ms`);
+      setStatus(job.tab, plural("app.status.imported", done.rows, { ms: done.durationMs }));
     } catch (caught) {
       setImporting((current) => (current ? { ...current, busy: false, progress: null, error: errorMessage(caught) } : current));
     } finally {
@@ -1412,17 +1413,17 @@ export function App() {
     if (!active) return;
     setBackupMenu(false);
     const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-");
-    const base = (active.engine === "sqlite" ? active.database.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, "") : active.database) || "respaldo";
+    const base = (active.engine === "sqlite" ? active.database.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, "") : active.database) || t("app.backup.defaultName");
     const extension = active.engine === "sqlite" ? "sqlite" : "sql";
-    const path = await save({ defaultPath: `${base}-${stamp}.${extension}`, filters: [{ name: "Respaldo", extensions: [extension] }] });
+    const path = await save({ defaultPath: `${base}-${stamp}.${extension}`, filters: [{ name: t("app.backup.filter"), extensions: [extension] }] });
     if (!path) return;
-    setBackupNote("Creando respaldo…");
+    setBackupNote(t("app.backup.creating"));
     try {
       const done = await backupDatabase({ connectionId: active.id, path, password: null });
       const size = done.bytes > 1_048_576 ? `${(done.bytes / 1_048_576).toFixed(1)} MB` : `${Math.max(1, Math.round(done.bytes / 1024))} KB`;
-      setBackupNote(`Respaldo listo: ${done.path} (${size}, ${(done.durationMs / 1000).toFixed(1)} s)`);
+      setBackupNote(t("app.backup.done", { path: done.path, size, seconds: (done.durationMs / 1000).toFixed(1) }));
     } catch (caught) {
-      setBackupNote(`No se pudo crear el respaldo: ${errorMessage(caught)}`);
+      setBackupNote(t("app.backup.failed", { error: errorMessage(caught) }));
     }
   };
 
@@ -1431,13 +1432,13 @@ export function App() {
     setBackupMenu(false);
     const picked = await open({ multiple: false, directory: false, filters: [{ name: "SQL", extensions: ["sql", "dump"] }] });
     if (typeof picked !== "string") return;
-    setBackupNote("Restaurando…");
+    setBackupNote(t("app.restore.running"));
     try {
       const done = await guarded((authorized) => restoreDatabase({ connectionId: active.id, path: picked, password: null, authorized }));
-      setBackupNote(`Restauración terminada en ${(done.durationMs / 1000).toFixed(1)} s`);
+      setBackupNote(t("app.restore.done", { seconds: (done.durationMs / 1000).toFixed(1) }));
       await refreshSchema();
     } catch (caught) {
-      setBackupNote(`No se pudo restaurar: ${errorMessage(caught)}`);
+      setBackupNote(t("app.restore.failed", { error: errorMessage(caught) }));
     }
   };
 
@@ -1446,17 +1447,17 @@ export function App() {
     const table = tabId === sqlTabId ? null : (tableTabs.find((tab) => tab.id === tabId)?.table ?? null);
     try {
       const path = await save({
-        defaultPath: `${table?.name ?? "resultado"}.${format}`,
+        defaultPath: `${table?.name ?? t("app.export.defaultName")}.${format}`,
         filters: [{ name: format.toUpperCase(), extensions: [format] }],
       });
       if (!path) return;
       if (table) {
         // The whole table goes from the database to the file in Rust; the UI never holds the rows.
-        setStatus(tabId, "Exportando…");
+        setStatus(tabId, t("app.export.running"));
         const query = tableQueryRef.current[tabId];
         const queryId = crypto.randomUUID();
         const stop = await listenHere<{ queryId: string; rows: number }>("gridl-export-progress", (event) => {
-          if (event.payload.queryId === queryId) setStatus(tabId, `Exportando… ${event.payload.rows.toLocaleString("es")} filas`);
+          if (event.payload.queryId === queryId) setStatus(tabId, plural("app.export.progress", event.payload.rows));
         }).catch(() => () => undefined);
         try {
           const done = await guarded((authorized) => exportQuery({
@@ -1469,7 +1470,7 @@ export function App() {
             authorized,
           }));
           const size = done.bytes > 1_048_576 ? `${(done.bytes / 1_048_576).toFixed(1)} MB` : `${Math.max(1, Math.round(done.bytes / 1024))} KB`;
-          setStatus(tabId, `${done.rows.toLocaleString("es")} filas exportadas (${size}) a ${path}`);
+          setStatus(tabId, plural("app.export.doneSized", done.rows, { size, path }));
         } finally {
           stop();
         }
@@ -1477,10 +1478,10 @@ export function App() {
       }
       const columns = views[sqlTabId]?.columns ?? [];
       const rows = rowsByTab.current[sqlTabId] ?? [];
-      await writeExport(path, exportRows(format, columns, rows, engine, quoteIdent("resultado")));
-      setStatus(tabId, `${rows.length.toLocaleString("es")} filas exportadas a ${path}`);
+      await writeExport(path, exportRows(format, columns, rows, engine, quoteIdent(t("app.export.defaultName"))));
+      setStatus(tabId, plural("app.export.done", rows.length, { path }));
     } catch (caught) {
-      setStatus(tabId, `No se pudo exportar: ${errorMessage(caught)}`);
+      setStatus(tabId, t("app.export.failed", { error: errorMessage(caught) }));
     }
   };
 
@@ -1505,7 +1506,7 @@ export function App() {
     }
     const table = activeTable.table;
     const id = activeTable.id;
-    void confirmDiscardRef.current({ tab: id, action: "Recargar", currentPageOnly: true }).then((ok) => {
+    void confirmDiscardRef.current({ tab: id, action: t("app.discard.reload"), currentPageOnly: true }).then((ok) => {
       if (!ok) return;
       const page = paging[id];
       void loadTable(table, page?.page ?? 0, page?.pageSize ?? 100, false, true);
@@ -1566,22 +1567,22 @@ export function App() {
     const nameOf = (id: string) => tableTabs.find((item) => item.id === id)?.table.name ?? id;
     for (const [id, edit] of Object.entries(pending)) {
       if (tab && id !== tab) continue;
-      const summary = describePending(edit).replace(/\. Guarda para aplicar\.$/, "");
+      const summary = pendingSummary(edit);
       if (summary) items.push(`${nameOf(id)}: ${summary}`);
     }
     for (const [id, list] of Object.entries(currentPageOnly ? {} : stashes)) {
       if (tab && id !== tab) continue;
       for (const stash of list) {
-        const summary = describePending(stash.edit).replace(/\. Guarda para aplicar\.$/, "");
+        const summary = pendingSummary(stash.edit);
         if (summary) items.push(`${nameOf(id)} (${stash.label}): ${summary}`);
       }
     }
     for (const [id, draft] of Object.entries(currentPageOnly ? {} : structureDrafts)) {
       if (tab && id !== tab) continue;
       const table = tableTabs.find((item) => item.id === id)?.table;
-      if (table && structureKey(table) === draft.signature) items.push(`Estructura de ${table.name}: cambios de columnas sin aplicar`);
+      if (table && structureKey(table) === draft.signature) items.push(t("app.unsaved.structure", { table: table.name }));
     }
-    if (!tab && inTransaction) items.push("Editor SQL: transacción abierta sin COMMIT; al salir se revierte");
+    if (!tab && inTransaction) items.push(t("app.unsaved.transaction"));
     return items;
   };
   const unsaved = unsavedItems().length > 0;
@@ -1591,7 +1592,7 @@ export function App() {
     return new Promise<boolean>((resolve) => {
       discardResolve.current?.(false);
       discardResolve.current = resolve;
-      setDiscardAsk({ items, action: scope?.action ?? "Continuar" });
+      setDiscardAsk({ items, action: scope?.action ?? t("app.discard.continue") });
     });
   };
   const answerDiscard = (ok: boolean) => {
@@ -1609,7 +1610,7 @@ export function App() {
     // The shell holds the window close and Cmd+Q while edits are pending.
     void listenHere<"window" | "app">("gridl-close-requested", (event) => {
       const quitting = event.payload === "app";
-      void confirmDiscardRef.current({ action: quitting ? "Salir de Gridl" : "Cerrar la ventana" }).then((ok) => {
+      void confirmDiscardRef.current({ action: quitting ? t("app.discard.quit") : t("app.discard.closeWindow") }).then((ok) => {
         if (!ok) return;
         void (quitting ? quitDiscarding() : closeDiscarding());
       });
@@ -1621,7 +1622,7 @@ export function App() {
     return () => stop();
   }, []);
 
-  const updates = <UpdateCenter beforeRestart={() => confirmDiscardRef.current({ action: "Actualizar y reiniciar" })} />;
+  const updates = <UpdateCenter beforeRestart={() => confirmDiscardRef.current({ action: t("app.discard.update") })} />;
 
   if (screen === "home") {
     return (
@@ -1675,17 +1676,17 @@ export function App() {
     if (menu.range) {
       const range = menu.range;
       const writableRange = tab ? canEditRows(tab.table, editLocked) : false;
-      const rowsLabel = range.rows === 1 ? "1 fila" : `${range.rows} filas`;
+      const rowsLabel = plural("common.rows", range.rows);
       const items: MenuItem[] = [
-        { label: `Copiar ${range.cells} celdas`, hint: "⌘C", run: () => range.copy(false) },
-        { label: "Copiar con encabezados", run: () => range.copy(true) },
+        { label: plural("app.menu.copyCells", range.cells), hint: "⌘C", run: () => range.copy(false) },
+        { label: t("app.menu.copyWithHeaders"), run: () => range.copy(true) },
       ];
-      if (tab) items.push({ label: `Copiar ${rowsLabel} como INSERT`, run: () => range.copyInserts(qualifiedName(tab.table), engine) });
+      if (tab) items.push({ label: t("app.menu.copyRowsAsInsert", { rows: rowsLabel }), run: () => range.copyInserts(qualifiedName(tab.table), engine) });
       if (writableRange) {
         items.push("separator");
-        items.push({ label: "Pegar", hint: "⌘V", run: range.paste });
-        items.push({ label: `Poner NULL en ${range.cells} celdas`, run: range.clear });
-        items.push({ label: `Eliminar ${rowsLabel}`, hint: "⌫", danger: true, run: range.removeRows });
+        items.push({ label: t("app.menu.paste"), hint: "⌘V", run: range.paste });
+        items.push({ label: plural("app.menu.setNullCells", range.cells), run: range.clear });
+        items.push({ label: t("app.menu.deleteRows", { rows: rowsLabel }), hint: "⌫", danger: true, run: range.removeRows });
       }
       return items;
     }
@@ -1700,24 +1701,24 @@ export function App() {
     if (tab && draftIndex < 0) {
       const key = keyForColumn(foreignKeys, tab.table, column.name);
       if (key && findTable(tables, key.refSchema, key.refTable)) {
-        items.push({ label: `Abrir en ${key.refTable}`, disabled: isNull, run: () => openReferenced(key, columns, values) });
+        items.push({ label: t("app.menu.openIn", { table: key.refTable }), disabled: isNull, run: () => openReferenced(key, columns, values) });
         items.push("separator");
       }
     }
-    items.push({ label: "Copiar valor", run: () => copyText(isNull ? "" : formatSqlValue(value)) });
-    items.push({ label: "Copiar fila", run: () => copyText(toTsv(columns, [values], false)) });
-    items.push({ label: "Copiar fila con encabezados", run: () => copyText(toTsv(columns, [values], true)) });
+    items.push({ label: t("app.menu.copyValue"), run: () => copyText(isNull ? "" : formatSqlValue(value)) });
+    items.push({ label: t("app.menu.copyRow"), run: () => copyText(toTsv(columns, [values], false)) });
+    items.push({ label: t("app.menu.copyRowWithHeaders"), run: () => copyText(toTsv(columns, [values], true)) });
     if (tab) {
       const target = qualifiedName(tab.table);
       items.push({
-        label: "Copiar como INSERT",
+        label: t("app.menu.copyAsInsert"),
         run: () => copyText(`INSERT INTO ${target} (${columns.map((item) => quoteIdent(item.name)).join(", ")}) VALUES (${columns.map((_, index) => sqlLiteral(values[index], engine)).join(", ")});`),
       });
     }
     if (tab && draftIndex < 0) {
       items.push("separator");
       items.push({
-        label: isNull ? `Filtrar: ${column.name} es NULL` : `Filtrar: ${column.name} = ${formatSqlValue(value).slice(0, 40)}`,
+        label: isNull ? t("app.menu.filterNull", { column: column.name }) : t("app.menu.filterEquals", { column: column.name, value: formatSqlValue(value).slice(0, 40) }),
         run: () => {
           const filter: TableFilter = { id: crypto.randomUUID(), column: column.name, op: isNull ? "null" : "=", value: isNull ? "" : formatSqlValue(value), enabled: true };
           const next = [...(tableQueryRef.current[menu.tab]?.filters ?? []), filter];
@@ -1729,8 +1730,8 @@ export function App() {
       const writableTab = canEditRows(tab.table, editLocked);
       if (writableTab) {
         items.push("separator");
-        items.push({ label: "Poner NULL", disabled: isNull || !column.nullable, run: () => editCell(menu.row, menu.column, { t: "null" }) });
-        items.push({ label: "Eliminar fila", danger: true, run: () => markRows([menu.row]) });
+        items.push({ label: t("app.menu.setNull"), disabled: isNull || !column.nullable, run: () => editCell(menu.row, menu.column, { t: "null" }) });
+        items.push({ label: t("app.menu.deleteRow"), danger: true, run: () => markRows([menu.row]) });
       }
     }
     return items;
@@ -1742,7 +1743,7 @@ export function App() {
     <div className="workspace-shell">
       <header className={`workspace-topbar env-${safety.environment}`} data-tauri-drag-region>
         <button type="button" className="back-button" onClick={() => void goHome()}>
-          <ArrowLeft size={17} /> Conexiones
+          <ArrowLeft size={17} /> {t("app.topbar.connections")}
         </button>
         <div className="workspace-separator" />
         <div className="connected-badge">
@@ -1750,21 +1751,21 @@ export function App() {
         </div>
         <span className="workspace-host" data-tauri-drag-region>{hostLine}</span>
         {safety.environment !== "local" ? (
-          <span className={`env-pill env-${safety.environment}`} title="Ambiente de esta conexión">{environmentLabel(safety.environment)}</span>
+          <span className={`env-pill env-${safety.environment}`} title={t("app.topbar.environment")}>{environmentLabel(safety.environment)}</span>
         ) : null}
-        {active?.readOnly ? <span className="readonly-badge">Solo lectura</span> : null}
+        {active?.readOnly ? <span className="readonly-badge">{t("app.topbar.readOnly")}</span> : null}
         <div className="topbar-actions">
           {backupNote ? (
             <span className="backup-note" title={backupNote} onClick={() => setBackupNote(null)}>{backupNote}</span>
           ) : null}
           <div className="popover-anchor">
             <button type="button" className="toolbar-button" onClick={() => setBackupMenu((current) => !current)}>
-              <ArchiveRestore size={14} /> Respaldo
+              <ArchiveRestore size={14} /> {t("app.backup.button")}
             </button>
             {backupMenu ? (
               <div className="popover-menu" onMouseLeave={() => setBackupMenu(false)}>
-                <button type="button" onClick={() => void runBackup()}>Crear respaldo…</button>
-                <button type="button" disabled={active?.engine === "sqlite" || structureLocked} onClick={() => void runRestore()}>Restaurar desde archivo…</button>
+                <button type="button" onClick={() => void runBackup()}>{t("app.backup.create")}</button>
+                <button type="button" disabled={active?.engine === "sqlite" || structureLocked} onClick={() => void runRestore()}>{t("app.backup.restore")}</button>
               </div>
             ) : null}
           </div>
@@ -1782,24 +1783,24 @@ export function App() {
         {explorerOpen ? (
         <aside className="explorer">
           <div className="explorer-heading">
-            <span>Explorador</span>
-            <button type="button" className="tiny-icon" aria-label="Actualizar esquema" onClick={() => void refreshSchema()}>
+            <span>{t("app.explorer.title")}</span>
+            <button type="button" className="tiny-icon" aria-label={t("app.explorer.refresh")} onClick={() => void refreshSchema()}>
               <Database size={15} />
             </button>
           </div>
           <div className="explorer-search">
             <Search size={14} />
-            <input value={objectQuery} placeholder="Buscar objetos..." onChange={(event) => setObjectQuery(event.target.value)} />
+            <input value={objectQuery} placeholder={t("app.explorer.search")} onChange={(event) => setObjectQuery(event.target.value)} />
           </div>
           <div className="tree-section">
             <TreeBranch
-              label={active?.database || "Base de datos"}
+              label={active?.database || t("app.explorer.database")}
               depth="depth-0 tree-root"
               icon={<Database size={15} />}
               open={branchOpen("db", true)}
               onToggle={() => toggleBranch("db", true)}
               actions={engine === "postgres" ? (
-                <button type="button" className="tiny-icon" aria-label="Crear esquema" disabled={structureLocked || running} onClick={() => openDialog({ kind: "create-schema" })}>
+                <button type="button" className="tiny-icon" aria-label={t("app.explorer.createSchema")} disabled={structureLocked || running} onClick={() => openDialog({ kind: "create-schema" })}>
                   <Plus size={14} />
                 </button>
               ) : null}
@@ -1823,10 +1824,10 @@ export function App() {
                       }}
                       actions={
                         <>
-                          <button type="button" className="tiny-icon" aria-label={`Renombrar ${name}`} disabled={structureLocked || running} onClick={() => openDialog({ kind: "rename-schema", name })}>
+                          <button type="button" className="tiny-icon" aria-label={t("app.explorer.rename", { name })} disabled={structureLocked || running} onClick={() => openDialog({ kind: "rename-schema", name })}>
                             <Pencil size={13} />
                           </button>
-                          <button type="button" className="tiny-icon" aria-label={`Eliminar ${name}`} disabled={structureLocked || running} onClick={() => openDialog({ kind: "drop-schema", name })}>
+                          <button type="button" className="tiny-icon" aria-label={t("app.explorer.delete", { name })} disabled={structureLocked || running} onClick={() => openDialog({ kind: "drop-schema", name })}>
                             <Trash2 size={13} />
                           </button>
                         </>
@@ -1837,14 +1838,14 @@ export function App() {
                   );
                 })
               ) : renderGroups(null, "depth-1", "depth-2")}
-              {engine === "postgres" && schemaNames.length === 0 ? <div className="tree-item depth-1">Sin esquemas</div> : null}
+              {engine === "postgres" && schemaNames.length === 0 ? <div className="tree-item depth-1">{t("app.explorer.noSchemas")}</div> : null}
             </TreeBranch>
           </div>
         </aside>
         ) : null}
         {explorerOpen ? (
           <PaneSplitter
-            label="Redimensionar explorador"
+            label={t("app.explorer.resize")}
             onDrag={(delta) =>
               setExplorerWidth((current) => {
                 const next = clampPane(current + delta, 200, paneLimit(workspaceRef.current, detailsWidth));
@@ -1857,7 +1858,7 @@ export function App() {
         <main className="editor-area">
           <div className="editor-tabs" role="tablist">
             <button type="button" role="tab" className={activeTabId === sqlTabId ? "active" : undefined} onClick={() => focusTab(sqlTabId)}>
-              <TerminalSquare size={15} /> Editor SQL
+              <TerminalSquare size={15} /> {t("app.tabs.sqlEditor")}
             </button>
             {tableTabs.map((tab) => (
               <div
@@ -1872,7 +1873,7 @@ export function App() {
                 <button
                   type="button"
                   className="tab-close"
-                  aria-label={`Cerrar ${tab.table.name}`}
+                  aria-label={t("app.tabs.close", { name: tab.table.name })}
                   onClick={(event) => {
                     event.stopPropagation();
                     closeTable(tab.id);
@@ -1883,7 +1884,7 @@ export function App() {
               </div>
             ))}
             <div className="editor-tab-actions">
-              <button type="button" className="icon-button" aria-label="Explorador" onClick={() => setExplorerOpen((current) => !current)}>
+              <button type="button" className="icon-button" aria-label={t("app.explorer.title")} onClick={() => setExplorerOpen((current) => !current)}>
                 <PanelLeft size={16} />
               </button>
             </div>
@@ -1899,8 +1900,8 @@ export function App() {
                   onRemove={(id) => active && setHistory(removeHistory(active.id, id))}
                   onClear={() => active && setHistory(clearHistory(active.id))}
                 />
-                <button type="button" className="toolbar-button" title="Formatea la selección o todo el script" onClick={formatEditor}>
-                  <Braces size={14} /> Formatear <kbd>{formatShortcut}</kbd>
+                <button type="button" className="toolbar-button" title={t("app.editor.formatTitle")} onClick={formatEditor}>
+                  <Braces size={14} /> {t("app.editor.format")} <kbd>{formatShortcut}</kbd>
                 </button>
                 <ExportMenu disabled={running || sqlView.columns.length === 0} onExport={(format) => void exportResult(sqlTabId, format)} />
                 <button
@@ -1912,13 +1913,13 @@ export function App() {
                     if (queryId) void cancelQuery(queryId);
                   }}
                 >
-                  Cancelar
+                  {t("app.editor.cancel")}
                 </button>
-                <button type="button" className="toolbar-button" title="Ejecuta todas las sentencias del editor, una tras otra" disabled={!active || running || busy} onClick={runScript}>
-                  <FastForward size={14} /> Todo <kbd>{runAllShortcut}</kbd>
+                <button type="button" className="toolbar-button" title={t("app.editor.runAllTitle")} disabled={!active || running || busy} onClick={runScript}>
+                  <FastForward size={14} /> {t("app.editor.runAll")} <kbd>{runAllShortcut}</kbd>
                 </button>
-                <button type="button" className="run-button" title="Ejecuta la selección o el comando del cursor" disabled={!active || running || busy} onClick={() => void runQuery()}>
-                  <Play size={14} /> Ejecutar <kbd>{runShortcut}</kbd>
+                <button type="button" className="run-button" title={t("app.editor.runTitle")} disabled={!active || running || busy} onClick={() => void runQuery()}>
+                  <Play size={14} /> {t("app.editor.run")} <kbd>{runShortcut}</kbd>
                 </button>
               </div>
             </div>
@@ -1938,7 +1939,7 @@ export function App() {
               <>
                 <PaneSplitter
                   axis="y"
-                  label="Redimensionar resultados"
+                  label={t("app.editor.resizeResults")}
                   onDrag={(delta) =>
                     setResultsHeight((current) => {
                       const next = clampResults(current - delta, sqlStageRef.current);
@@ -1959,24 +1960,24 @@ export function App() {
                       onCellMenu={(row, column, point, range) => setCellMenu({ tab: sqlTabId, row, column, ...point, range })}
                     />
                   ) : (
-                    <ResultMessage text={sqlView.pending ? "Ejecutando…" : sqlView.status} />
+                    <ResultMessage text={sqlView.pending ? t("app.status.running") : sqlView.status} />
                   )}
                 </div>
               </>
             ) : null}
             <div className={sqlView.error ? "editor-status failed" : "editor-status"}>
-              <span>{sqlView.status || "Ejecuta una consulta o elige una tabla."}</span>
+              <span>{sqlView.status || t("app.empty.start")}</span>
               {sqlView.more && !running ? (
                 <button
                   type="button"
                   className="status-action"
-                  title="Vuelve a ejecutar la consulta trayendo más filas"
+                  title={t("app.editor.loadMoreTitle")}
                   onClick={() => {
                     const more = sqlView.more;
                     if (more) void runQuery(sqlTabId, more.sql, more.limit);
                   }}
                 >
-                  Cargar hasta {sqlView.more.limit.toLocaleString("es")} filas
+                  {t("app.editor.loadMore", { count: formatNumber(sqlView.more.limit) })}
                 </button>
               ) : null}
             </div>
@@ -1988,8 +1989,8 @@ export function App() {
                   <span>{activeTable.table.schema ? `${activeTable.table.schema}.${activeTable.table.name}` : activeTable.table.name}</span>
                   {structureTable && !structureLocked ? (
                     <div className="view-switch" role="tablist">
-                      <button type="button" className={tablePane === "rows" ? "active" : undefined} onClick={() => setTablePane("rows")}>Datos</button>
-                      <button type="button" className={tablePane === "structure" ? "active" : undefined} onClick={() => setTablePane("structure")}>Estructura</button>
+                      <button type="button" className={tablePane === "rows" ? "active" : undefined} onClick={() => setTablePane("rows")}>{t("app.table.data")}</button>
+                      <button type="button" className={tablePane === "structure" ? "active" : undefined} onClick={() => setTablePane("structure")}>{t("app.table.structure")}</button>
                     </div>
                   ) : null}
                 </div>
@@ -2014,15 +2015,15 @@ export function App() {
                     />
                     <ExportMenu disabled={running || tableView.columns.length === 0} onExport={(format) => void exportResult(activeTable.id, format)} />
                     {writable ? (
-                      <button type="button" className="toolbar-button" disabled={running} title="Importar filas desde un archivo CSV" onClick={() => void startImport(activeTable.id, activeTable.table)}>
-                        <Upload size={14} /> Importar
+                      <button type="button" className="toolbar-button" disabled={running} title={t("app.table.importTitle")} onClick={() => void startImport(activeTable.id, activeTable.table)}>
+                        <Upload size={14} /> {t("app.table.import")}
                       </button>
                     ) : null}
                     <button type="button" className="toolbar-button" disabled={!writable || running || tableView.columns.length === 0} onClick={startDraft}>
-                      <Plus size={14} /> Fila
+                      <Plus size={14} /> {t("app.table.row")}
                     </button>
                     <button type="button" className="toolbar-button" disabled={!writable || running || pickedRows.length === 0} onClick={() => markRows(pickedRows)}>
-                      <Trash2 size={14} /> Eliminar
+                      <Trash2 size={14} /> {t("app.table.delete")}
                     </button>
                     {pending[activeTable.id] || stashes[activeTable.id]?.length ? (
                       <>
@@ -2030,10 +2031,10 @@ export function App() {
                           <Eye size={14} /> SQL
                         </button>
                         <button type="button" className="run-button" disabled={running} onClick={() => void saveEdits()}>
-                          Guardar <kbd>{saveShortcut}</kbd>
+                          {t("app.table.save")} <kbd>{saveShortcut}</kbd>
                         </button>
                         <button type="button" className="toolbar-button" disabled={running} onClick={discardEdits}>
-                          Cancelar
+                          {t("app.table.cancel")}
                         </button>
                       </>
                     ) : null}
@@ -2109,14 +2110,14 @@ export function App() {
                     onCellMenu={(row, column, point, range) => setCellMenu({ tab: activeTable.id, row, column, ...point, range })}
                   />
                 ) : (
-                  tableView.error ? <ErrorPanel error={tableView.error} action={reconnectAction(tableView.error)} /> : <div className="results-empty">{tableView.status || "Cargando…"}</div>
+                  tableView.error ? <ErrorPanel error={tableView.error} action={reconnectAction(tableView.error)} /> : <div className="results-empty">{tableView.status || t("app.status.loading")}</div>
                 )
               ) : (
-                <pre className="definition-view">{activeTable.table.definition || "Sin definición."}</pre>
+                <pre className="definition-view">{activeTable.table.definition || t("app.definition.none")}</pre>
               )}
               {tablePane === "structure" && structureTable && !structureLocked ? null : !writable && showsRows(activeTable.table) ? (
                 <div className="editor-status">
-                  <span>{active?.readOnly ? "Conexión de solo lectura." : safety.writes === "block" ? `La política de ${environmentLabel(safety.environment)} bloquea los cambios de datos.` : activeTable.table.kind !== "table" ? "Las vistas no se editan desde aquí." : "Sin clave primaria no se puede editar ni borrar."}</span>
+                  <span>{active?.readOnly ? t("app.table.readOnly") : safety.writes === "block" ? t("app.table.policyBlocks", { environment: environmentLabel(safety.environment) }) : activeTable.table.kind !== "table" ? t("app.table.viewsReadOnly") : t("app.table.noPrimaryKey")}</span>
                 </div>
               ) : null}
               {tablePane === "structure" && structureTable && !structureLocked ? null : showsRows(activeTable.table) ? (
@@ -2150,7 +2151,7 @@ export function App() {
           ) : null}
         </main>
         <PaneSplitter
-          label="Redimensionar detalles"
+          label={t("app.details.resize")}
           onDrag={(delta) =>
             setDetailsWidth((current) => {
               const next = clampPane(current - delta, 200, paneLimit(workspaceRef.current, explorerOpen ? explorerWidth : 0));
@@ -2163,13 +2164,13 @@ export function App() {
           <div className="details-heading">
             {focusedValues !== null && detailTable ? (
               <div className="view-switch" role="tablist">
-                <button type="button" className={showRow ? "active" : undefined} onClick={() => setDetailsTab("row")}>Fila</button>
+                <button type="button" className={showRow ? "active" : undefined} onClick={() => setDetailsTab("row")}>{t("app.details.row")}</button>
                 <button type="button" className={showRow ? undefined : "active"} onClick={() => setDetailsTab("structure")}>
-                  {detailTable.kind === "function" || detailTable.kind === "procedure" ? "Argumentos" : "Estructura"}
+                  {detailTable.kind === "function" || detailTable.kind === "procedure" ? t("app.details.arguments") : t("app.details.structure")}
                 </button>
               </div>
             ) : (
-              <span>{focusedValues !== null ? "Fila" : detailTable && (detailTable.kind === "function" || detailTable.kind === "procedure") ? "Argumentos" : "Estructura"}</span>
+              <span>{focusedValues !== null ? t("app.details.row") : detailTable && (detailTable.kind === "function" || detailTable.kind === "procedure") ? t("app.details.arguments") : t("app.details.structure")}</span>
             )}
           </div>
           {showRow && focusedRow && focusView ? (
@@ -2188,7 +2189,7 @@ export function App() {
           ) : detailTable ? (
             <div className="details-body">
               <strong>{detailTable.schema ? `${detailTable.schema}.${detailTable.name}` : detailTable.name}</strong>
-              <span>{detailTable.kind}{primaryKeys(detailTable).length > 0 ? ` · clave ${primaryKeys(detailTable).map((column) => column.name).join(", ")}` : " · sin clave primaria"}</span>
+              <span>{detailTable.kind}{primaryKeys(detailTable).length > 0 ? ` · ${t("app.details.primaryKey", { columns: primaryKeys(detailTable).map((column) => column.name).join(", ") })}` : ` · ${t("app.details.noPrimaryKey")}`}</span>
               <ul className="column-list">
                 {detailTable.columns.map((column) => (
                   <li key={column.name}>
@@ -2199,7 +2200,7 @@ export function App() {
               </ul>
               {detailTable.kind === "table" && (outgoingKeys(foreignKeys, detailTable).length > 0 || incomingKeys(foreignKeys, detailTable).length > 0) ? (
                 <>
-                  <span className="details-subhead">Relaciones</span>
+                  <span className="details-subhead">{t("app.details.relations")}</span>
                   <ul className="column-list relation-list">
                     {outgoingKeys(foreignKeys, detailTable).map((key) => (
                       <li key={`out:${key.name}`}>
@@ -2222,20 +2223,20 @@ export function App() {
               <div className="details-orb">
                 <Database size={22} />
               </div>
-              <strong>Selecciona un objeto</strong>
-              <span>Elige una tabla del explorador para ver sus columnas.</span>
+              <strong>{t("app.details.emptyTitle")}</strong>
+              <span>{t("app.details.emptyBody")}</span>
             </div>
           )}
         </aside>
       </div>
       {dialog?.kind === "create-schema" ? (
-        <NameDialog title="Nuevo esquema" description="El esquema queda vacío hasta que crees una tabla dentro." initial="" confirmLabel="Crear" busy={running} error={formError} onClose={() => setDialog(null)} onSubmit={(name) => void submitName(name)} />
+        <NameDialog title={t("app.schema.newTitle")} description={t("app.schema.newDescription")} initial="" confirmLabel={t("app.schema.create")} busy={running} error={formError} onClose={() => setDialog(null)} onSubmit={(name) => void submitName(name)} />
       ) : null}
       {dialog?.kind === "rename-schema" ? (
-        <NameDialog title="Renombrar esquema" description={`El esquema ${dialog.name} cambia de nombre. Las tablas que contiene se mueven con él.`} initial={dialog.name} confirmLabel="Renombrar" busy={running} error={formError} onClose={() => setDialog(null)} onSubmit={(name) => void submitName(name)} />
+        <NameDialog title={t("app.schema.renameTitle")} description={t("app.schema.renameDescription", { name: dialog.name })} initial={dialog.name} confirmLabel={t("app.schema.rename")} busy={running} error={formError} onClose={() => setDialog(null)} onSubmit={(name) => void submitName(name)} />
       ) : null}
       {dialog?.kind === "drop-schema" ? (
-        <ConfirmDialog title="Eliminar esquema" description={`Se elimina ${dialog.name} solo si no tiene tablas.`} confirmLabel="Eliminar" busy={running} error={formError} onClose={() => setDialog(null)} onConfirm={() => void submitDropSchema()} />
+        <ConfirmDialog title={t("app.schema.dropTitle")} description={t("app.schema.dropDescription", { name: dialog.name })} confirmLabel={t("app.schema.drop")} busy={running} error={formError} onClose={() => setDialog(null)} onConfirm={() => void submitDropSchema()} />
       ) : null}
       {updates}
       {importing ? (

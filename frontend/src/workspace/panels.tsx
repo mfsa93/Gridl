@@ -7,6 +7,7 @@ import type { ShownError } from "../lib/errors";
 import type { GuardInfo } from "../lib/api";
 import { environmentLabel } from "../lib/environments";
 import type { HistoryEntry } from "./history";
+import { formatDate, plural, t } from "../lib/i18n";
 
 /** Closes a popover when the pointer goes down outside it or Escape is pressed. */
 function useDismiss(open: boolean, onClose: () => void) {
@@ -55,7 +56,7 @@ export function FilterBar({
         <div key={filter.id} className="filter-row">
           <input
             type="checkbox"
-            aria-label="Usar filtro"
+            aria-label={t("panel.filter.use")}
             checked={filter.enabled}
             onChange={(event) => {
               const next = filters.map((item) => (item.id === filter.id ? { ...item, enabled: event.target.checked } : item));
@@ -64,13 +65,13 @@ export function FilterBar({
             }}
           />
           {filter.op === "sql" ? null : (
-            <select value={filter.column} aria-label="Columna" onChange={(event) => patch(filter.id, { column: event.target.value })}>
+            <select value={filter.column} aria-label={t("panel.filter.column")} onChange={(event) => patch(filter.id, { column: event.target.value })}>
               {columns.map((column) => (
                 <option key={column.name} value={column.name}>{column.name}</option>
               ))}
             </select>
           )}
-          <select value={filter.op} aria-label="Operador" onChange={(event) => patch(filter.id, { op: event.target.value as FilterOp })}>
+          <select value={filter.op} aria-label={t("panel.filter.operator")} onChange={(event) => patch(filter.id, { op: event.target.value as FilterOp })}>
             {filterOps.map((item) => (
               <option key={item.op} value={item.op}>{item.label}</option>
             ))}
@@ -79,7 +80,7 @@ export function FilterBar({
             <input
               className="filter-value"
               value={filter.value}
-              placeholder={filter.op === "sql" ? "precio > 10 and activo" : filter.op === "in" ? "a, b, c" : "valor"}
+              placeholder={filter.op === "sql" ? t("panel.filter.sqlPlaceholder") : filter.op === "in" ? "a, b, c" : t("panel.filter.valuePlaceholder")}
               onChange={(event) => patch(filter.id, { value: event.target.value })}
               onKeyDown={(event) => {
                 if (event.key === "Enter") {
@@ -94,7 +95,7 @@ export function FilterBar({
           <button
             type="button"
             className="tiny-icon"
-            aria-label="Quitar filtro"
+            aria-label={t("panel.filter.remove")}
             onClick={() => {
               const next = filters.filter((item) => item.id !== filter.id);
               onChange(next);
@@ -107,10 +108,10 @@ export function FilterBar({
       ))}
       <div className="filter-actions">
         <button type="button" className="toolbar-button" onClick={() => onChange([...filters, blankFilter(first)])}>
-          <Plus size={13} /> Condición
+          <Plus size={13} /> {t("panel.filter.condition")}
         </button>
         <button type="button" className="run-button" disabled={busy} onClick={() => onApply(filters)}>
-          Filtrar
+          {t("panel.filter.apply")}
         </button>
         {filters.length > 0 ? (
           <button
@@ -122,7 +123,7 @@ export function FilterBar({
               onApply([]);
             }}
           >
-            Limpiar
+            {t("panel.filter.clear")}
           </button>
         ) : null}
       </div>
@@ -133,7 +134,7 @@ export function FilterBar({
 export function FilterToggle({ count, open, onToggle }: { count: number; open: boolean; onToggle: () => void }) {
   return (
     <button type="button" className={open ? "toolbar-button active" : "toolbar-button"} onClick={onToggle}>
-      <Filter size={14} /> Filtros{count > 0 ? ` (${count})` : ""}
+      <Filter size={14} /> {t("panel.filter.toggle")}{count > 0 ? ` (${count})` : ""}
     </button>
   );
 }
@@ -144,7 +145,7 @@ export function ExportMenu({ disabled, onExport }: { disabled: boolean; onExport
   return (
     <div className="popover-anchor" ref={ref}>
       <button type="button" className="toolbar-button" disabled={disabled} onClick={() => setOpen((current) => !current)}>
-        <Download size={14} /> Exportar
+        <Download size={14} /> {t("panel.export")}
       </button>
       {open ? (
         <div className="popover-menu">
@@ -168,12 +169,12 @@ export function ExportMenu({ disabled, onExport }: { disabled: boolean; onExport
 
 function relativeTime(at: number): string {
   const seconds = Math.round((Date.now() - at) / 1000);
-  if (seconds < 60) return "ahora";
+  if (seconds < 60) return t("panel.history.now");
   const minutes = Math.round(seconds / 60);
-  if (minutes < 60) return `hace ${minutes} min`;
+  if (minutes < 60) return t("panel.history.minutesAgo", { count: minutes });
   const hours = Math.round(minutes / 60);
-  if (hours < 24) return `hace ${hours} h`;
-  return new Date(at).toLocaleDateString("es");
+  if (hours < 24) return t("panel.history.hoursAgo", { count: hours });
+  return formatDate(at);
 }
 
 export function HistoryMenu({
@@ -200,21 +201,21 @@ export function HistoryMenu({
   return (
     <div className="popover-anchor" ref={ref}>
       <button type="button" className="toolbar-button" onClick={() => setOpen((current) => !current)}>
-        <History size={14} /> Historial
+        <History size={14} /> {t("panel.history.title")}
       </button>
       {open ? (
         <div className="popover-menu history-menu">
           <div className="history-tools">
-            <input value={needle} autoFocus placeholder="Buscar en el historial" onChange={(event) => setNeedle(event.target.value)} />
-            <button type="button" className={onlyStarred ? "tiny-icon active" : "tiny-icon"} aria-label="Solo favoritas" title="Solo favoritas" onClick={() => setOnlyStarred((current) => !current)}>
+            <input value={needle} autoFocus placeholder={t("panel.history.search")} onChange={(event) => setNeedle(event.target.value)} />
+            <button type="button" className={onlyStarred ? "tiny-icon active" : "tiny-icon"} aria-label={t("panel.history.onlyStarred")} title={t("panel.history.onlyStarred")} onClick={() => setOnlyStarred((current) => !current)}>
               <Star size={13} />
             </button>
-            <button type="button" className="tiny-icon" aria-label="Vaciar historial" title="Vaciar (conserva favoritas)" onClick={onClear}>
+            <button type="button" className="tiny-icon" aria-label={t("panel.history.clear")} title={t("panel.history.clearTitle")} onClick={onClear}>
               <Trash2 size={13} />
             </button>
           </div>
           <div className="history-list">
-            {shown.length === 0 ? <div className="history-empty">Sin consultas.</div> : null}
+            {shown.length === 0 ? <div className="history-empty">{t("panel.history.empty")}</div> : null}
             {shown.map((entry) => (
               <div key={entry.id} className={entry.ok ? "history-item" : "history-item failed"}>
                 <button
@@ -230,13 +231,13 @@ export function HistoryMenu({
                   <span>
                     {relativeTime(entry.at)}
                     {entry.durationMs !== null ? ` · ${entry.durationMs} ms` : ""}
-                    {entry.ok ? "" : " · error"}
+                    {entry.ok ? "" : ` · ${t("panel.history.failed")}`}
                   </span>
                 </button>
-                <button type="button" className={entry.starred ? "tiny-icon starred" : "tiny-icon"} aria-label="Favorita" onClick={() => onStar(entry.id)}>
+                <button type="button" className={entry.starred ? "tiny-icon starred" : "tiny-icon"} aria-label={t("panel.history.star")} onClick={() => onStar(entry.id)}>
                   <Star size={13} />
                 </button>
-                <button type="button" className="tiny-icon" aria-label="Quitar" onClick={() => onRemove(entry.id)}>
+                <button type="button" className="tiny-icon" aria-label={t("panel.history.remove")} onClick={() => onRemove(entry.id)}>
                   <X size={13} />
                 </button>
               </div>
@@ -251,7 +252,7 @@ export function HistoryMenu({
 function inlineSql(statement: BatchStatement): string {
   if (statement.params.length === 0) return statement.sql;
   const values = statement.params.map((value) => (value.t === "null" ? "NULL" : formatSqlValue(value)));
-  return `${statement.sql}\n  -- parámetros: ${values.join(", ")}`;
+  return `${statement.sql}\n  -- ${t("panel.preview.params")}: ${values.join(", ")}`;
 }
 
 export function PreviewDialog({
@@ -272,22 +273,22 @@ export function PreviewDialog({
     <div className="modal-backdrop" onMouseDown={onClose}>
       <div className="modal preview-modal" onMouseDown={(event) => event.stopPropagation()}>
         <div className="modal-topline">
-          <h2>Cambios pendientes</h2>
-          <button type="button" className="close-button" aria-label="Cerrar" onClick={onClose}>
+          <h2>{t("panel.preview.title")}</h2>
+          <button type="button" className="close-button" aria-label={t("dialog.close")} onClick={onClose}>
             <X size={16} />
           </button>
         </div>
         <p className="modal-description">
-          {statements.length === 1 ? "1 sentencia" : `${statements.length} sentencias`} en una sola transacción. Si alguna falla, no se aplica ninguna.
+          {plural("panel.preview.description", statements.length)}
         </p>
         <pre className="preview-sql">{text}</pre>
         {error ? <p className="form-error">{error}</p> : null}
         <div className="modal-footer">
           <button type="button" className="secondary-button" onClick={() => void navigator.clipboard?.writeText(text)}>
-            <Copy size={14} /> Copiar
+            <Copy size={14} /> {t("panel.preview.copy")}
           </button>
-          <button type="button" className="secondary-button" onClick={onClose}>Cerrar</button>
-          <button type="button" className="primary-button" disabled={busy} onClick={onApply}>Aplicar</button>
+          <button type="button" className="secondary-button" onClick={onClose}>{t("dialog.close")}</button>
+          <button type="button" className="primary-button" disabled={busy} onClick={onApply}>{t("panel.preview.apply")}</button>
         </div>
       </div>
     </div>
@@ -321,7 +322,7 @@ export function RowDetails({
 }) {
   return (
     <div className="details-body row-details">
-      <strong>Fila {index + 1}</strong>
+      <strong>{t("panel.row.title", { number: index + 1 })}</strong>
       <dl className="row-fields-list">
         {columns.map((column, position) => {
           const shown = prettyValue(row[position]);
@@ -330,14 +331,14 @@ export function RowDetails({
             <div key={`${position}:${column.name}`} className="row-field">
               <dt>
                 <span>{column.name}</span>
-                <button type="button" className="tiny-icon" aria-label={`Copiar ${column.name}`} onClick={() => void navigator.clipboard?.writeText(shown.isNull ? "" : shown.text)}>
+                <button type="button" className="tiny-icon" aria-label={t("panel.row.copy", { column: column.name })} onClick={() => void navigator.clipboard?.writeText(shown.isNull ? "" : shown.text)}>
                   <Copy size={12} />
                 </button>
               </dt>
               <dd className={shown.isNull ? "null" : shown.json ? "json" : undefined}>{shown.text}</dd>
               {link ? (
                 <button type="button" className="relation-link row-jump" onClick={link.open}>
-                  Abrir en {link.label} <ArrowUpRight size={12} />
+                  {t("panel.row.openIn", { table: link.label })} <ArrowUpRight size={12} />
                 </button>
               ) : null}
             </div>
@@ -365,19 +366,19 @@ export function ErrorPanel({
     <div className={compact ? "error-panel compact" : "error-panel"} role="alert">
       <CircleAlert size={compact ? 15 : 18} className="error-icon" />
       <div className="error-text">
-        <strong>{compact ? error.message : "La consulta falló"}</strong>
+        <strong>{compact ? error.message : t("panel.error.queryFailed")}</strong>
         {compact ? null : <pre>{error.message}</pre>}
         {error.hint ? <p className="error-hint">{error.hint}</p> : null}
       </div>
       <div className="error-actions">
         {action ? (
-          <button type="button" className="toolbar-button error-action" disabled={action.busy} onClick={action.run}>{action.busy ? "Reconectando…" : action.label}</button>
+          <button type="button" className="toolbar-button error-action" disabled={action.busy} onClick={action.run}>{action.busy ? t("panel.error.reconnecting") : action.label}</button>
         ) : null}
-        <button type="button" className="tiny-icon" aria-label="Copiar error" title="Copiar error" onClick={() => void navigator.clipboard?.writeText(error.message)}>
+        <button type="button" className="tiny-icon" aria-label={t("panel.error.copy")} title={t("panel.error.copy")} onClick={() => void navigator.clipboard?.writeText(error.message)}>
           <Copy size={13} />
         </button>
         {onClose ? (
-          <button type="button" className="tiny-icon" aria-label="Cerrar" onClick={onClose}>
+          <button type="button" className="tiny-icon" aria-label={t("dialog.close")} onClick={onClose}>
             <X size={13} />
           </button>
         ) : null}
@@ -475,32 +476,32 @@ export function GuardDialog({
           <span className="guard-icon">{blocked ? <ShieldX size={22} /> : <ShieldAlert size={22} />}</span>
           <div>
             <span className={`env-pill env-${info.environment}`}>{environment}</span>
-            <h2>{blocked ? "Sentencia bloqueada" : info.dangerous ? "Operación destructiva" : "¿Autorizas este cambio?"}</h2>
+            <h2>{blocked ? t("guard.title.blocked") : info.dangerous ? t("guard.title.dangerous") : t("guard.title.confirm")}</h2>
           </div>
         </div>
         <p className="modal-description">
           {blocked
-            ? `La política de ${environment} no permite sentencias que ${info.reason}. Puedes cambiarla en Editar conexión → Seguridad.`
+            ? t("guard.description.blocked", { environment, reason: info.reason })
             : info.dangerous
-              ? `${info.reason}. Revisa la sentencia antes de seguir.`
-              : `Esta sentencia ${info.reason} en una conexión de ${environment}.`}
+              ? t("guard.description.dangerous", { reason: info.reason })
+              : t("guard.description.confirm", { environment, reason: info.reason })}
         </p>
         <pre className="preview-sql guard-sql">{sql}</pre>
         {mustType ? (
           <label className="form-field guard-type">
-            <span>Escribe <code>{expected}</code> para confirmar</span>
+            <span>{t("guard.typeBefore")}<code>{expected}</code>{t("guard.typeAfter")}</span>
             <input value={typed} autoFocus autoCorrect="off" autoCapitalize="off" onChange={(event) => setTyped(event.target.value)} />
           </label>
         ) : null}
-        {many && !blocked ? <p className="field-hint">La autorización vale para el resto de sentencias de este script.</p> : null}
+        {many && !blocked ? <p className="field-hint">{t("guard.many")}</p> : null}
         <div className="modal-footer">
           {blocked ? (
-            <button type="button" className="primary-button" autoFocus onClick={onCancel}>Entendido</button>
+            <button type="button" className="primary-button" autoFocus onClick={onCancel}>{t("guard.ok")}</button>
           ) : (
             <>
-              <button type="button" className="secondary-button" autoFocus={!mustType} onClick={onCancel}>Cancelar</button>
+              <button type="button" className="secondary-button" autoFocus={!mustType} onClick={onCancel}>{t("dialog.cancel")}</button>
               <button type="submit" className={info.dangerous || info.environment === "production" ? "primary-button danger-button" : "primary-button"} disabled={!ready}>
-                Ejecutar
+                {t("guard.run")}
               </button>
             </>
           )}
@@ -536,16 +537,16 @@ export function UnsavedDialog({
         <div className="guard-head">
           <span className="guard-icon unsaved-icon"><TriangleAlert size={22} /></span>
           <div>
-            <h2>Hay cambios sin guardar</h2>
+            <h2>{t("dialog.unsaved.title")}</h2>
           </div>
         </div>
-        <p className="modal-description">Si continúas, se pierden:</p>
+        <p className="modal-description">{t("dialog.unsaved.description")}</p>
         <ul className="unsaved-list">
           {items.map((item) => <li key={item}>{item}</li>)}
         </ul>
         <div className="modal-footer">
-          <button type="button" className="secondary-button" autoFocus onClick={onCancel}>Seguir editando</button>
-          <button type="button" className="primary-button danger-button" onClick={onDiscard}>{action} y descartar</button>
+          <button type="button" className="secondary-button" autoFocus onClick={onCancel}>{t("dialog.unsaved.keepEditing")}</button>
+          <button type="button" className="primary-button danger-button" onClick={onDiscard}>{t("dialog.unsaved.discard", { action })}</button>
         </div>
       </div>
     </div>

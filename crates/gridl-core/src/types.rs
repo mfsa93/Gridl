@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::CoreError;
 use crate::guard::SafetySettings;
+use crate::tr;
 use crate::value::SqlValue;
 
 /// Rows delivered to the UI in one IPC message.
@@ -33,7 +34,7 @@ pub struct ConnectionId(String);
 impl ConnectionId {
     pub fn new(id: impl Into<String>) -> Result<Self, CoreError> {
         let id = id.into();
-        validate_token(&id, "connection id")?;
+        validate_token(&id, Token::ConnectionId)?;
         Ok(Self(id))
     }
 
@@ -141,23 +142,35 @@ impl ConnectionConfig {
     pub fn validate(&self) -> Result<(), CoreError> {
         let _id = self.connection_id()?;
         if self.name.trim().is_empty() || self.name.len() > 200 {
-            return Err(CoreError::InvalidConfig("name must be 1..=200 characters".into()));
+            return Err(CoreError::InvalidConfig(tr!(
+                "the name must have 1 to 200 characters",
+                "el nombre debe tener de 1 a 200 caracteres"
+            )));
         }
         if self.database.trim().is_empty() {
-            return Err(CoreError::InvalidConfig("database is empty".into()));
+            return Err(CoreError::InvalidConfig(tr!(
+                "the database is empty",
+                "la base de datos está vacía"
+            )));
         }
         if let Some(host) = &self.host {
             if host.trim().is_empty() || host.chars().any(char::is_control) {
-                return Err(CoreError::InvalidConfig("host is invalid".into()));
+                return Err(CoreError::InvalidConfig(tr!(
+                    "the host is not valid",
+                    "el host no es válido"
+                )));
             }
         }
         if let Some(username) = &self.username {
             if username.is_empty() || username.len() > 200 {
-                return Err(CoreError::InvalidConfig("username is invalid".into()));
+                return Err(CoreError::InvalidConfig(tr!(
+                    "the username is not valid",
+                    "el usuario no es válido"
+                )));
             }
         }
         if let Some(account) = &self.credential_account {
-            validate_token(account, "credential account")?;
+            validate_token(account, Token::CredentialAccount)?;
         }
         if let Some(group) = &self.group {
             validate_group_name(group)?;
@@ -186,45 +199,59 @@ impl ConnectionConfig {
         if !matches!(self.engine, DatabaseEngine::Postgres | DatabaseEngine::Mysql) {
             return Ok(());
         }
-        validate_path_opt(self.tls.root_cert.as_deref(), "certificado CA")?;
-        validate_path_opt(self.tls.client_cert.as_deref(), "certificado cliente")?;
-        validate_path_opt(self.tls.client_key.as_deref(), "llave cliente")?;
+        validate_path_opt(self.tls.root_cert.as_deref(), PathLabel::RootCert)?;
+        validate_path_opt(self.tls.client_cert.as_deref(), PathLabel::ClientCert)?;
+        validate_path_opt(self.tls.client_key.as_deref(), PathLabel::ClientKey)?;
         if self.tls.client_cert.is_some() != self.tls.client_key.is_some() {
-            return Err(CoreError::InvalidConfig(
-                "el certificado cliente y su llave van juntos".into(),
-            ));
+            return Err(CoreError::InvalidConfig(tr!(
+                "the client certificate and its key go together",
+                "el certificado cliente y su llave van juntos"
+            )));
         }
         if matches!(self.tls.mode, TlsMode::VerifyCa | TlsMode::VerifyFull)
             && self.tls.root_cert.is_none()
         {
-            return Err(CoreError::InvalidConfig(
-                "verificar el certificado exige un certificado CA".into(),
-            ));
+            return Err(CoreError::InvalidConfig(tr!(
+                "verifying the certificate requires a CA certificate",
+                "verificar el certificado exige un certificado CA"
+            )));
         }
         if !self.ssh.enabled {
             return Ok(());
         }
-        validate_host(self.ssh.host.as_deref(), "servidor SSH")?;
+        validate_ssh_host(self.ssh.host.as_deref())?;
         let username = self.ssh.username.as_deref().unwrap_or("");
         if username.is_empty() || username.len() > 200 || username.chars().any(char::is_control) {
-            return Err(CoreError::InvalidConfig("el usuario SSH no es válido".into()));
+            return Err(CoreError::InvalidConfig(tr!(
+                "the SSH user is not valid",
+                "el usuario SSH no es válido"
+            )));
         }
         if self.ssh.port == Some(0) {
-            return Err(CoreError::InvalidConfig("el puerto SSH no es válido".into()));
+            return Err(CoreError::InvalidConfig(tr!(
+                "the SSH port is not valid",
+                "el puerto SSH no es válido"
+            )));
         }
         if self.ssh.auth == SshAuth::Key {
-            validate_path_opt(self.ssh.private_key.as_deref(), "llave privada")?;
+            validate_path_opt(self.ssh.private_key.as_deref(), PathLabel::PrivateKey)?;
             if self.ssh.private_key.is_none() {
-                return Err(CoreError::InvalidConfig("indica la ruta de la llave privada".into()));
+                return Err(CoreError::InvalidConfig(tr!(
+                    "enter the path of the private key",
+                    "indica la ruta de la llave privada"
+                )));
             }
         }
         if let Some(fingerprint) = &self.ssh.host_fingerprint {
             if fingerprint.len() > 200 || fingerprint.chars().any(char::is_control) {
-                return Err(CoreError::InvalidConfig("la huella SSH no es válida".into()));
+                return Err(CoreError::InvalidConfig(tr!(
+                    "the SSH fingerprint is not valid",
+                    "la huella SSH no es válida"
+                )));
             }
         }
         if let Some(account) = &self.ssh.credential_account {
-            validate_token(account, "credential account")?;
+            validate_token(account, Token::CredentialAccount)?;
         }
         Ok(())
     }
@@ -332,21 +359,26 @@ impl QueryRequest {
     ) -> Result<Self, CoreError> {
         let query_id = query_id.into();
         let sql = sql.into();
-        validate_token(&query_id, "query id")?;
+        validate_token(&query_id, Token::QueryId)?;
         if sql.trim().is_empty() {
-            return Err(CoreError::InvalidConfig("SQL is empty".into()));
+            return Err(CoreError::InvalidConfig(tr!("the SQL is empty", "el SQL está vacío")));
         }
         if sql.len() > MAX_SQL_BYTES {
-            return Err(CoreError::InvalidConfig("SQL exceeds 2 MiB".into()));
+            return Err(CoreError::InvalidConfig(tr!(
+                "the SQL is larger than 2 MiB",
+                "el SQL supera 2 MiB"
+            )));
         }
         if chunk_rows == 0 || chunk_rows > MAX_CHUNK_ROWS {
-            return Err(CoreError::InvalidConfig(format!(
-                "chunk size must be 1..={MAX_CHUNK_ROWS}"
+            return Err(CoreError::InvalidConfig(tr!(
+                "the chunk size must be 1 to {MAX_CHUNK_ROWS} rows",
+                "el bloque debe tener de 1 a {MAX_CHUNK_ROWS} filas"
             )));
         }
         if max_rows == 0 || max_rows > MAX_STREAM_ROWS {
-            return Err(CoreError::InvalidConfig(format!(
-                "max rows must be 1..={MAX_STREAM_ROWS}"
+            return Err(CoreError::InvalidConfig(tr!(
+                "the row limit must be 1 to {MAX_STREAM_ROWS}",
+                "el límite de filas debe ser de 1 a {MAX_STREAM_ROWS}"
             )));
         }
         Ok(Self { query_id, sql, params, chunk_rows, max_rows, cancel })
@@ -437,19 +469,23 @@ pub struct BatchRequest {
 impl BatchRequest {
     pub fn new(statements: Vec<BatchStatement>) -> Result<Self, CoreError> {
         if statements.is_empty() {
-            return Err(CoreError::InvalidConfig("batch is empty".into()));
+            return Err(CoreError::InvalidConfig(tr!("the batch is empty", "el lote está vacío")));
         }
         if statements.len() > MAX_BATCH_STATEMENTS {
-            return Err(CoreError::InvalidConfig(format!(
-                "batch exceeds {MAX_BATCH_STATEMENTS} statements"
+            return Err(CoreError::InvalidConfig(tr!(
+                "the batch has more than {MAX_BATCH_STATEMENTS} statements",
+                "el lote tiene más de {MAX_BATCH_STATEMENTS} sentencias"
             )));
         }
         let total: usize = statements.iter().map(|statement| statement.sql.len()).sum();
         if total > MAX_SQL_BYTES * 8 {
-            return Err(CoreError::InvalidConfig("batch exceeds 16 MiB".into()));
+            return Err(CoreError::InvalidConfig(tr!(
+                "the batch is larger than 16 MiB",
+                "el lote supera 16 MiB"
+            )));
         }
         if statements.iter().any(|statement| statement.sql.trim().is_empty()) {
-            return Err(CoreError::InvalidConfig("SQL is empty".into()));
+            return Err(CoreError::InvalidConfig(tr!("the SQL is empty", "el SQL está vacío")));
         }
         Ok(Self { statements })
     }
@@ -458,11 +494,14 @@ impl BatchRequest {
     /// the statement count cap and allows up to [`MAX_BULK_BYTES`] of SQL.
     pub fn bulk(statements: Vec<BatchStatement>) -> Result<Self, CoreError> {
         if statements.is_empty() {
-            return Err(CoreError::InvalidConfig("batch is empty".into()));
+            return Err(CoreError::InvalidConfig(tr!("the batch is empty", "el lote está vacío")));
         }
         let total: usize = statements.iter().map(|statement| statement.sql.len()).sum();
         if total > MAX_BULK_BYTES {
-            return Err(CoreError::InvalidConfig("batch exceeds 1 GiB".into()));
+            return Err(CoreError::InvalidConfig(tr!(
+                "the batch is larger than 1 GiB",
+                "el lote supera 1 GiB"
+            )));
         }
         Ok(Self { statements })
     }
@@ -491,39 +530,88 @@ fn trim_opt(value: Option<String>) -> Option<String> {
     })
 }
 
-fn validate_host(host: Option<&str>, label: &str) -> Result<(), CoreError> {
+fn validate_ssh_host(host: Option<&str>) -> Result<(), CoreError> {
     let host = host.unwrap_or("");
     if host.is_empty() || host.len() > 255 || host.chars().any(char::is_control) {
-        return Err(CoreError::InvalidConfig(format!("el {label} no es válido")));
+        return Err(CoreError::InvalidConfig(tr!(
+            "the SSH server is not valid",
+            "el servidor SSH no es válido"
+        )));
     }
     Ok(())
 }
 
-fn validate_path_opt(path: Option<&str>, label: &str) -> Result<(), CoreError> {
+/// A file path in the connection's security settings.
+#[derive(Clone, Copy)]
+enum PathLabel {
+    RootCert,
+    ClientCert,
+    ClientKey,
+    PrivateKey,
+}
+
+fn validate_path_opt(path: Option<&str>, label: PathLabel) -> Result<(), CoreError> {
     let Some(path) = path else {
         return Ok(());
     };
     if path.is_empty() || path.len() > 1024 || path.chars().any(char::is_control) {
-        return Err(CoreError::InvalidConfig(format!("la ruta de {label} no es válida")));
+        return Err(CoreError::InvalidConfig(match label {
+            PathLabel::RootCert => tr!(
+                "the CA certificate path is not valid",
+                "la ruta de certificado CA no es válida"
+            ),
+            PathLabel::ClientCert => tr!(
+                "the client certificate path is not valid",
+                "la ruta de certificado cliente no es válida"
+            ),
+            PathLabel::ClientKey => {
+                tr!("the client key path is not valid", "la ruta de llave cliente no es válida")
+            }
+            PathLabel::PrivateKey => {
+                tr!("the private key path is not valid", "la ruta de llave privada no es válida")
+            }
+        }));
     }
     Ok(())
 }
 
 pub(crate) fn validate_group_name(name: &str) -> Result<(), CoreError> {
     if name.is_empty() || name.len() > 80 || name.chars().any(char::is_control) {
-        return Err(CoreError::InvalidConfig("group must be 1..=80 characters".into()));
+        return Err(CoreError::InvalidConfig(tr!(
+            "the group name must have 1 to 80 characters",
+            "el nombre del grupo debe tener de 1 a 80 caracteres"
+        )));
     }
     Ok(())
 }
 
-pub(crate) fn validate_token(value: &str, label: &str) -> Result<(), CoreError> {
+/// An internal identifier checked by [`validate_token`].
+#[derive(Clone, Copy)]
+pub(crate) enum Token {
+    ConnectionId,
+    CredentialAccount,
+    QueryId,
+}
+
+pub(crate) fn validate_token(value: &str, label: Token) -> Result<(), CoreError> {
     if value.is_empty()
         || value.len() > 128
         || value.chars().any(|character| character.is_control() || character.is_whitespace())
     {
-        return Err(CoreError::InvalidConfig(format!(
-            "{label} must be 1..=128 characters without whitespace"
-        )));
+        return Err(CoreError::InvalidConfig(match label {
+            Token::ConnectionId => tr!(
+                "the connection id must have 1 to 128 characters without spaces",
+                "el id de la conexión debe tener de 1 a 128 caracteres sin espacios"
+            ),
+            Token::CredentialAccount => tr!(
+                "the credential account must have 1 to 128 characters without spaces",
+                "la cuenta de la credencial debe tener de 1 a 128 caracteres sin espacios"
+            ),
+            Token::QueryId => tr!(
+                "the query id must have 1 to 128 characters without spaces",
+                "el id de la consulta debe tener de 1 a 128 caracteres sin espacios"
+            ),
+        }));
     }
     Ok(())
 }

@@ -9,6 +9,7 @@ mod drivers;
 mod error;
 mod export;
 mod guard;
+mod i18n;
 mod import;
 mod profiles;
 mod secret;
@@ -24,6 +25,7 @@ pub use guard::{
     classify, evaluate, evaluate_restore, Environment, GuardMode, SafetySettings, StatementKind,
     Verdict,
 };
+pub use i18n::{detect as detect_locale, locale, set_locale, with_locale, Locale};
 pub use import::{
     build_import, parse_delimiter, preview_csv, sniff_delimiter, CsvPreview, ImportBatch,
     ImportPlan, IMPORT_ROWS_PER_STATEMENT, MAX_IMPORT_BYTES,

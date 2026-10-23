@@ -4,6 +4,7 @@ import { type DatabaseEngine } from "../lib/api";
 import { type TableSchema } from "../lib/api";
 import { columnTypeSpecs, columnTypes, createTableSql, isGeneratedType, referencingType, sizeKind, type AddedColumn, type NewColumn } from "./changes";
 import { fkActions } from "./relations";
+import { plural, t } from "../lib/i18n";
 
 export function NameDialog({
   title,
@@ -37,18 +38,18 @@ export function NameDialog({
       >
         <div className="modal-topline">
           <h2>{title}</h2>
-          <button type="button" className="close-button" aria-label="Cerrar" onClick={onClose}>
+          <button type="button" className="close-button" aria-label={t("dialog.close")} onClick={onClose}>
             <X size={16} />
           </button>
         </div>
         <p className="modal-description">{description}</p>
         <label>
-          Nombre
+          {t("dialog.name")}
           <input value={name} autoFocus autoCorrect="off" autoCapitalize="off" onChange={(event) => setName(event.target.value)} />
         </label>
         {error ? <p className="form-error">{error}</p> : null}
         <div className="modal-footer">
-          <button type="button" className="secondary-button" onClick={onClose}>Cancelar</button>
+          <button type="button" className="secondary-button" onClick={onClose}>{t("dialog.cancel")}</button>
           <button type="submit" className="primary-button" disabled={busy}>{confirmLabel}</button>
         </div>
       </form>
@@ -85,14 +86,14 @@ export function ConfirmDialog({
       >
         <div className="modal-topline">
           <h2>{title}</h2>
-          <button type="button" className="close-button" aria-label="Cerrar" onClick={onClose}>
+          <button type="button" className="close-button" aria-label={t("dialog.close")} onClick={onClose}>
             <X size={16} />
           </button>
         </div>
         <p className="modal-description">{description}</p>
         {error ? <p className="form-error">{error}</p> : null}
         <div className="modal-footer">
-          <button type="button" className="secondary-button" onClick={onClose}>Cancelar</button>
+          <button type="button" className="secondary-button" onClick={onClose}>{t("dialog.cancel")}</button>
           <button type="submit" className="primary-button danger-button" disabled={busy}>{confirmLabel}</button>
         </div>
       </form>
@@ -146,19 +147,19 @@ export function ColumnDialog({
         }}
       >
         <div className="modal-topline">
-          <h2>Nueva columna</h2>
-          <button type="button" className="close-button" aria-label="Cerrar" onClick={onClose}>
+          <h2>{t("dialog.column.title")}</h2>
+          <button type="button" className="close-button" aria-label={t("dialog.close")} onClick={onClose}>
             <X size={16} />
           </button>
         </div>
-        <p className="modal-description">Se agrega al final de {table}.</p>
+        <p className="modal-description">{t("dialog.column.description", { table })}</p>
         <div className="form-grid">
           <label className="span-2">
-            Nombre
+            {t("dialog.name")}
             <input value={name} autoFocus autoCorrect="off" autoCapitalize="off" onChange={(event) => setName(event.target.value)} />
           </label>
           <label className="span-2">
-            Tipo
+            {t("dialog.type")}
             <select value={dataType} onChange={(event) => setDataType(event.target.value)}>
               {types.map((type) => (
                 <option key={type.name} value={type.name}>{type.name}</option>
@@ -167,53 +168,53 @@ export function ColumnDialog({
           </label>
           {spec?.kind === "length" ? (
             <label className="span-2">
-              Longitud
-              <input value={length} inputMode="numeric" placeholder="opcional, por ejemplo 255" onChange={(event) => setLength(event.target.value)} />
+              {t("dialog.length")}
+              <input value={length} inputMode="numeric" placeholder={t("dialog.column.lengthPlaceholder")} onChange={(event) => setLength(event.target.value)} />
             </label>
           ) : null}
           {spec?.kind === "numeric" ? (
             <>
               <label>
-                Precisión
-                <input value={precision} inputMode="numeric" placeholder="opcional" onChange={(event) => setPrecision(event.target.value)} />
+                {t("dialog.precision")}
+                <input value={precision} inputMode="numeric" placeholder={t("dialog.optional")} onChange={(event) => setPrecision(event.target.value)} />
               </label>
               <label>
-                Escala
-                <input value={scale} inputMode="numeric" placeholder="opcional" onChange={(event) => setScale(event.target.value)} />
+                {t("dialog.scale")}
+                <input value={scale} inputMode="numeric" placeholder={t("dialog.optional")} onChange={(event) => setScale(event.target.value)} />
               </label>
             </>
           ) : null}
           <label className="check-row">
             <input type="checkbox" checked={generated ? false : nullable} disabled={generated} onChange={(event) => setNullable(event.target.checked)} />
-            Acepta NULL
+            {t("dialog.nullable")}
           </label>
           {engine !== "sqlite" ? (
             <label className="check-row">
               <input type="checkbox" checked={unique} onChange={(event) => setUnique(event.target.checked)} />
-              Única
+              {t("dialog.unique")}
             </label>
           ) : null}
           <label className="span-2">
-            Valor predeterminado
+            {t("dialog.defaultValue")}
             <input
               value={generated ? "" : defaultValue}
               disabled={generated}
-              placeholder={generated ? "lo asigna la base" : "0, activo, now()"}
+              placeholder={generated ? t("dialog.column.generatedPlaceholder") : t("dialog.column.defaultPlaceholder")}
               onChange={(event) => setDefaultValue(event.target.value)}
             />
           </label>
         </div>
         <p className="field-hint">
           {generated
-            ? "Este tipo genera el valor solo. No hace falta NULL ni predeterminado."
+            ? t("dialog.column.hintGenerated")
             : nullable
-              ? "Si lo dejas vacío, las filas que ya existen quedan en NULL."
-              : "Como no acepta NULL, el predeterminado rellena las filas que ya existen."}
+              ? t("dialog.column.hintNullable")
+              : t("dialog.column.hintRequired")}
         </p>
         {error ? <p className="form-error">{error}</p> : null}
         <div className="modal-footer">
-          <button type="button" className="secondary-button" onClick={onClose}>Cancelar</button>
-          <button type="submit" className="primary-button" disabled={busy}>Agregar</button>
+          <button type="button" className="secondary-button" onClick={onClose}>{t("dialog.cancel")}</button>
+          <button type="submit" className="primary-button" disabled={busy}>{t("dialog.column.add")}</button>
         </div>
       </form>
     </div>
@@ -287,7 +288,7 @@ export function TableDialog({
   let preview: string;
   let previewOk = true;
   try {
-    preview = createTableSql(schema, name.trim() || "nueva_tabla", columns, engine);
+    preview = createTableSql(schema, name.trim() || t("dialog.table.previewName"), columns, engine);
   } catch (caught) {
     preview = caught instanceof Error ? caught.message : String(caught);
     previewOk = false;
@@ -303,27 +304,27 @@ export function TableDialog({
         }}
       >
         <div className="modal-topline">
-          <h2>Nueva tabla</h2>
-          <button type="button" className="close-button" aria-label="Cerrar" onClick={onClose}>
+          <h2>{t("dialog.table.title")}</h2>
+          <button type="button" className="close-button" aria-label={t("dialog.close")} onClick={onClose}>
             <X size={16} />
           </button>
         </div>
-        <p className="modal-description">{schema ? `Se crea en el esquema ${schema}.` : "Se crea en la base abierta."}</p>
+        <p className="modal-description">{schema ? t("dialog.table.inSchema", { schema }) : t("dialog.table.inDatabase")}</p>
         <label className="form-field">
-          Nombre
-          <input value={name} autoFocus autoCorrect="off" autoCapitalize="off" placeholder="clientes" onChange={(event) => setName(event.target.value)} />
+          {t("dialog.name")}
+          <input value={name} autoFocus autoCorrect="off" autoCapitalize="off" placeholder={t("dialog.table.namePlaceholder")} onChange={(event) => setName(event.target.value)} />
         </label>
-        <div className="form-section-title">Columnas</div>
+        <div className="form-section-title">{t("dialog.columns")}</div>
         <div className="column-group">
           <div className="column-group-head">
-            <span>Nombre</span>
-            <span>Tipo</span>
-            <span title="Longitud, o precisión y escala: 255 o 10,2">Tamaño</span>
-            <span>Predeterminado</span>
-            <span title="Forma parte de la clave primaria">Clave</span>
-            <span title="NOT NULL: no acepta valores vacíos">No nulo</span>
-            <span title="UNIQUE: no admite valores repetidos">Única</span>
-            <span title="Clave foránea: la columna apunta a otra tabla">Referencia</span>
+            <span>{t("dialog.name")}</span>
+            <span>{t("dialog.type")}</span>
+            <span title={t("dialog.table.sizeTitle")}>{t("dialog.table.size")}</span>
+            <span>{t("dialog.table.default")}</span>
+            <span title={t("dialog.table.keyTitle")}>{t("dialog.table.key")}</span>
+            <span title={t("dialog.table.notNullTitle")}>{t("dialog.table.notNull")}</span>
+            <span title={t("dialog.table.uniqueTitle")}>{t("dialog.unique")}</span>
+            <span title={t("dialog.table.referenceTitle")}>{t("dialog.reference")}</span>
             <span />
           </div>
           {columns.map((column, index) => {
@@ -333,15 +334,15 @@ export function TableDialog({
               <div className="column-editor-row" key={index}>
                 <input
                   value={column.name}
-                  aria-label="Nombre de columna"
-                  placeholder="columna"
+                  aria-label={t("dialog.table.columnName")}
+                  placeholder={t("dialog.table.columnPlaceholder")}
                   autoCorrect="off"
                   autoCapitalize="off"
                   onChange={(event) => update(index, { name: event.target.value })}
                 />
                 <select
                   value={column.dataType}
-                  aria-label="Tipo"
+                  aria-label={t("dialog.type")}
                   onChange={(event) => update(index, { dataType: event.target.value, size: sizeKind(engine, event.target.value) === kind ? column.size : "" })}
                 >
                   {types.map((type) => (
@@ -350,7 +351,7 @@ export function TableDialog({
                 </select>
                 <input
                   value={kind === "plain" ? "" : column.size}
-                  aria-label="Tamaño"
+                  aria-label={t("dialog.table.size")}
                   inputMode="numeric"
                   disabled={kind === "plain"}
                   placeholder={kind === "length" ? (engine === "mysql" ? "255" : "—") : kind === "numeric" ? "10,2" : ""}
@@ -358,35 +359,35 @@ export function TableDialog({
                 />
                 <input
                   value={generated ? "" : column.defaultValue}
-                  aria-label="Valor predeterminado"
+                  aria-label={t("dialog.defaultValue")}
                   disabled={generated}
                   autoCorrect="off"
                   autoCapitalize="off"
-                  placeholder={generated ? "automático" : "NULL"}
+                  placeholder={generated ? t("dialog.table.automatic") : "NULL"}
                   onChange={(event) => update(index, { defaultValue: event.target.value })}
                 />
                 <input
                   type="checkbox"
-                  aria-label="Clave primaria"
+                  aria-label={t("dialog.table.primaryKey")}
                   checked={column.primaryKey}
                   onChange={(event) => update(index, { primaryKey: event.target.checked, required: event.target.checked || column.required })}
                 />
                 <input
                   type="checkbox"
-                  aria-label="No nulo"
+                  aria-label={t("dialog.table.notNull")}
                   checked={column.primaryKey || column.required}
                   disabled={column.primaryKey}
                   onChange={(event) => update(index, { required: event.target.checked })}
                 />
                 <input
                   type="checkbox"
-                  aria-label="Única"
+                  aria-label={t("dialog.unique")}
                   checked={column.primaryKey || column.unique}
                   disabled={column.primaryKey}
                   onChange={(event) => update(index, { unique: event.target.checked })}
                 />
                 <div className={column.reference ? "reference-cell linked" : "reference-cell"}>
-                  <select value={referenceKey(column.reference)} aria-label="Referencia" onChange={(event) => chooseReference(index, event.target.value, column)}>
+                  <select value={referenceKey(column.reference)} aria-label={t("dialog.reference")} onChange={(event) => chooseReference(index, event.target.value, column)}>
                     <option value="">—</option>
                     {targets.map((table) => (
                       <optgroup key={`${table.schema ?? ""}.${table.name}`} label={table.schema && table.schema !== schema ? `${table.schema}.${table.name}` : table.name}>
@@ -401,18 +402,18 @@ export function TableDialog({
                   {column.reference ? (
                     <select
                       value={column.reference.onDelete}
-                      aria-label="Al borrar"
-                      title="Qué pasa con esta fila cuando se borra la referenciada"
+                      aria-label={t("dialog.onDelete")}
+                      title={t("dialog.table.onDeleteTitle")}
                       onChange={(event) => update(index, { reference: column.reference ? { ...column.reference, onDelete: event.target.value } : null })}
                     >
-                      {fkActions.map((action) => <option key={action} value={action}>{action === "NO ACTION" ? "al borrar: nada" : `al borrar: ${action.toLowerCase()}`}</option>)}
+                      {fkActions.map((action) => <option key={action} value={action}>{action === "NO ACTION" ? t("dialog.table.onDeleteNothing") : t("dialog.table.onDeleteAction", { action: action.toLowerCase() })}</option>)}
                     </select>
                   ) : null}
                 </div>
                 <button
                   type="button"
                   className="tiny-icon"
-                  aria-label="Quitar columna"
+                  aria-label={t("dialog.table.removeColumn")}
                   disabled={columns.length === 1}
                   onClick={() => setColumns((current) => current.filter((_, item) => item !== index))}
                 >
@@ -426,25 +427,25 @@ export function TableDialog({
           <button
             type="button"
             className="tiny-icon"
-            aria-label="Agregar columna"
-            title="Agregar columna"
+            aria-label={t("dialog.addColumn")}
+            title={t("dialog.addColumn")}
             onClick={() => setColumns((current) => [...current, blank({})])}
           >
             <Plus size={14} />
           </button>
-          <span>{columns.length === 1 ? "1 columna" : `${columns.length} columnas`}</span>
+          <span>{plural("dialog.table.columnCount", columns.length)}</span>
           <button type="button" className="disclosure" aria-expanded={showSql} onClick={() => setShowSql((current) => !current)}>
             <ChevronRight size={12} className={showSql ? "open" : undefined} /> SQL
           </button>
         </div>
         {showSql ? <pre className={previewOk ? "preview-sql table-sql" : "preview-sql table-sql invalid"}>{preview}</pre> : null}
         <p className="field-hint table-hint">
-          En el predeterminado escribe el valor tal cual: <code>0</code>, <code>activo</code>, <code>now()</code> o <code>current_timestamp</code>. El texto se pone entre comillas solo.
+          {t("dialog.table.hintBefore")}<code>0</code>, <code>{t("dialog.table.hintActive")}</code>, <code>now()</code>{t("dialog.table.hintOr")}<code>current_timestamp</code>{t("dialog.table.hintAfter")}
         </p>
         {error ? <p className="form-error">{error}</p> : null}
         <div className="modal-footer">
-          <button type="button" className="secondary-button" onClick={onClose}>Cancelar</button>
-          <button type="submit" className="primary-button" disabled={busy}>Crear</button>
+          <button type="button" className="secondary-button" onClick={onClose}>{t("dialog.cancel")}</button>
+          <button type="submit" className="primary-button" disabled={busy}>{t("dialog.table.create")}</button>
         </div>
       </form>
     </div>

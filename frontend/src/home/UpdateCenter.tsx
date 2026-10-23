@@ -5,6 +5,7 @@ import { check, type Update } from "@tauri-apps/plugin-updater";
 import { Download, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { errorMessage, listenHere } from "../lib/api";
+import { locale, t } from "../lib/i18n";
 
 /** Checked once per app run, even though this component remounts with each screen. */
 let checkedAtStartup = false;
@@ -21,15 +22,19 @@ type State =
 function updateError(caught: unknown): string {
   const message = errorMessage(caught);
   if (/valid release JSON|404|not found/i.test(message)) {
-    return "Todavía no hay ninguna versión publicada en GitHub. Si acabas de crear una, espera a que termine de compilarse.";
+    return t("update.error.noRelease");
   }
   if (/network|dns|connect|timed out|offline|error sending request/i.test(message)) {
-    return "No hay conexión con GitHub. Revisa tu conexión a internet e inténtalo de nuevo.";
+    return t("update.error.offline");
   }
   if (/signature/i.test(message)) {
-    return "La actualización no tiene una firma válida y no se instaló.";
+    return t("update.error.signature");
   }
   return message;
+}
+
+function megabytes(bytes: number): string {
+  return (bytes / 1_048_576).toLocaleString(locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 }
 
 function isMainWindow(): boolean {
@@ -109,22 +114,22 @@ export function UpdateCenter({ beforeRestart }: { beforeRestart: () => Promise<b
       <div className="modal update-modal" role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>
         <div className="modal-topline">
           <h2>
-            {state.kind === "checking" ? "Buscando actualizaciones…"
-              : state.kind === "current" ? "Gridl está al día"
-                : state.kind === "failed" ? "No se pudo buscar actualizaciones"
-                  : `Gridl ${state.update.version} está disponible`}
+            {state.kind === "checking" ? t("update.checking")
+              : state.kind === "current" ? t("update.current")
+                : state.kind === "failed" ? t("update.failed")
+                  : t("update.available", { version: state.update.version })}
           </h2>
           {busy ? null : (
-            <button type="button" className="close-button" aria-label="Cerrar" onClick={close}>
+            <button type="button" className="close-button" aria-label={t("update.close")} onClick={close}>
               <X size={16} />
             </button>
           )}
         </div>
-        {state.kind === "current" ? <p className="modal-description">Tienes la versión más reciente ({state.version}).</p> : null}
+        {state.kind === "current" ? <p className="modal-description">{t("update.currentVersion", { version: state.version })}</p> : null}
         {state.kind === "failed" ? <p className="form-error">{state.message}</p> : null}
         {state.kind === "available" || state.kind === "downloading" ? (
           <>
-            <p className="modal-description">Tienes la versión {state.current}. Se descarga, se instala y Gridl se reinicia.</p>
+            <p className="modal-description">{t("update.availableDescription", { version: state.current })}</p>
             {state.update.body ? <pre className="update-notes">{state.update.body}</pre> : null}
           </>
         ) : null}
@@ -136,15 +141,19 @@ export function UpdateCenter({ beforeRestart }: { beforeRestart: () => Promise<b
         <div className="modal-footer">
           {state.kind === "available" ? (
             <>
-              <button type="button" className="secondary-button" onClick={close}>Más tarde</button>
+              <button type="button" className="secondary-button" onClick={close}>{t("update.later")}</button>
               <button type="button" className="primary-button" onClick={() => void install()}>
-                <Download size={14} /> Instalar y reiniciar
+                <Download size={14} /> {t("update.install")}
               </button>
             </>
           ) : state.kind === "downloading" ? (
-            <span className="field-hint">Descargando… {(state.done / 1_048_576).toFixed(1)} MB{state.total ? ` de ${(state.total / 1_048_576).toFixed(1)} MB` : ""}</span>
+            <span className="field-hint">
+              {state.total
+                ? t("update.downloadingOf", { done: megabytes(state.done), total: megabytes(state.total) })
+                : t("update.downloading", { done: megabytes(state.done) })}
+            </span>
           ) : state.kind === "checking" ? null : (
-            <button type="button" className="primary-button" autoFocus onClick={close}>Aceptar</button>
+            <button type="button" className="primary-button" autoFocus onClick={close}>{t("update.ok")}</button>
           )}
         </div>
       </div>

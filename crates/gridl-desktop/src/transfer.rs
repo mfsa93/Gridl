@@ -15,6 +15,8 @@ use gridl_core::{
 use serde::{Deserialize, Serialize};
 use tauri::{Manager, State, Window};
 
+use gridl_core::tr;
+
 use crate::commands::{export_path, fail, guard, CancelGuard};
 use crate::state::AppState;
 use crate::windows::emit_to_window;
@@ -190,13 +192,19 @@ pub(crate) async fn run_export(
     let path = export_path(&request.path)?;
     let cancel = Arc::new(AtomicBool::new(false));
     if !state.register_cancel(&request.query_id, Arc::clone(&cancel)).map_err(fail)? {
-        return Err(format!("query '{}' is already running", request.query_id));
+        let query_id = &request.query_id;
+        return Err(tr!(
+            "the query '{query_id}' is already running",
+            "la consulta '{query_id}' ya se está ejecutando"
+        ));
     }
     let _guard = CancelGuard { state, query_id: request.query_id.clone() };
     let query =
         QueryRequest::export(request.query_id, request.sql, EXPORT_CHUNK_ROWS, Arc::clone(&cancel))
             .map_err(fail)?;
-    let file = File::create(&path).map_err(|err| format!("No se pudo crear el archivo: {err}"))?;
+    let file = File::create(&path).map_err(|err| {
+        tr!("Couldn't create the file: {err}", "No se pudo crear el archivo: {err}")
+    })?;
     let out = BufWriter::with_capacity(1024 * 1024, Counting { inner: file, bytes: 0 });
     let mut sink = FileSink {
         writer: ExportWriter::new(out, request.format, engine, &request.table),
@@ -207,9 +215,13 @@ pub(crate) async fn run_export(
     };
     let outcome = state.driver(engine).query(&id, &query, &mut sink).await;
     let finished = match (outcome, sink.failed.take()) {
-        (_, Some(err)) => Err(format!("No se pudo escribir el archivo: {err}")),
+        (_, Some(err)) => {
+            Err(tr!("Couldn't write the file: {err}", "No se pudo escribir el archivo: {err}"))
+        }
         (Err(err), None) => Err(fail(err)),
-        (Ok(result), None) if result.cancelled => Err("Exportación cancelada.".to_owned()),
+        (Ok(result), None) if result.cancelled => {
+            Err(tr!("Export cancelled.", "Exportación cancelada."))
+        }
         (Ok(_), None) => Ok(()),
     };
     if let Err(err) = finished {
@@ -228,7 +240,7 @@ pub(crate) async fn run_export(
         Ok(bytes) => Ok(ExportResult { rows, bytes, duration_ms: elapsed_ms(started) }),
         Err(err) => {
             remove_partial(&path);
-            Err(format!("No se pudo escribir el archivo: {err}"))
+            Err(tr!("Couldn't write the file: {err}", "No se pudo escribir el archivo: {err}"))
         }
     }
 }
@@ -322,36 +334,49 @@ pub(crate) async fn run_import(
 /// usually quotes the bad value.
 fn import_error(err: &CoreError, span: Option<&(u64, u64, u64)>) -> String {
     let message = err.to_string();
-    let detail = message.strip_prefix("database: ").unwrap_or(&message);
-    let detail = match detail.strip_prefix("sentencia ").and_then(|rest| rest.split_once(": ")) {
-        Some((_, rest)) => rest,
-        None => detail,
+    let detail = match err {
+        CoreError::Statement { message, .. } => message.as_str(),
+        _ => message.strip_prefix("database: ").unwrap_or(&message),
     };
     match span {
-        Some((first, last, _)) if first == last => {
-            format!("Línea {first}: {detail}. No se importó ninguna fila.")
-        }
-        Some((first, last, _)) => {
-            format!("Error en una fila de las líneas {first} a {last}: {detail}. No se importó ninguna fila.")
-        }
-        None => format!("{detail}. No se importó ninguna fila."),
+        Some((first, last, _)) if first == last => tr!(
+            "Line {first}: {detail}. No rows were imported.",
+            "Línea {first}: {detail}. No se importó ninguna fila."
+        ),
+        Some((first, last, _)) => tr!(
+            "Error in a row on lines {first} to {last}: {detail}. No rows were imported.",
+            "Error en una fila de las líneas {first} a {last}: {detail}. No se importó ninguna fila."
+        ),
+        None => tr!("{detail}. No rows were imported.", "{detail}. No se importó ninguna fila."),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use gridl_core::CoreError;
+    use gridl_core::{with_locale, CoreError, Locale};
 
     use super::import_error;
 
     #[test]
     fn import_errors_name_the_csv_lines() {
-        let err =
-            CoreError::Database("sentencia 2: invalid input syntax for type integer: \"x\"".into());
+        let err = CoreError::Statement {
+            number: 2,
+            message: "invalid input syntax for type integer: \"x\"".into(),
+        };
         assert_eq!(
-            import_error(&err, Some(&(502, 1001, 500))),
+            with_locale(Locale::Es, || import_error(&err, Some(&(502, 1001, 500)))),
             "Error en una fila de las líneas 502 a 1001: invalid input syntax for type integer: \"x\". No se importó ninguna fila."
         );
-        assert!(import_error(&err, Some(&(7, 7, 1))).starts_with("Línea 7: invalid input"));
+        assert_eq!(
+            with_locale(Locale::En, || import_error(&err, Some(&(502, 1001, 500)))),
+            "Error in a row on lines 502 to 1001: invalid input syntax for type integer: \"x\". No rows were imported."
+        );
+        let single = with_locale(Locale::Es, || import_error(&err, Some(&(7, 7, 1))));
+        assert!(single.starts_with("Línea 7: invalid input"), "{single}");
+        let other = CoreError::Database("deadlock detected".into());
+        assert_eq!(
+            with_locale(Locale::En, || import_error(&other, None)),
+            "deadlock detected. No rows were imported."
+        );
     }
 }

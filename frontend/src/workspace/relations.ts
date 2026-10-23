@@ -1,3 +1,4 @@
+import { t } from "../lib/i18n";
 import { quoteIdent, qualifiedName, type DatabaseEngine, type ForeignKey, type TableSchema } from "../lib/api";
 
 export const fkActions = ["NO ACTION", "RESTRICT", "CASCADE", "SET NULL", "SET DEFAULT"] as const;
@@ -56,8 +57,8 @@ function refTarget(schema: string | null, table: string): string {
 
 /** `foreign key (...) references ...`, shared by CREATE TABLE and ALTER TABLE. */
 export function foreignKeyClause(key: NewForeignKey): string {
-  if (key.columns.length === 0) throw new Error("Elige la columna de la relación");
-  if (key.refColumns.length !== key.columns.length) throw new Error("Elige la columna referenciada");
+  if (key.columns.length === 0) throw new Error(t("relations.pickColumn"));
+  if (key.refColumns.length !== key.columns.length) throw new Error(t("relations.pickReferenced"));
   const parts = [
     `foreign key (${key.columns.map(quoteIdent).join(", ")})`,
     `references ${refTarget(key.refSchema, key.refTable)} (${key.refColumns.map(quoteIdent).join(", ")})`,
@@ -72,13 +73,13 @@ export function foreignKeyName(table: string, columns: string[]): string {
 }
 
 export function addForeignKeySql(engine: DatabaseEngine, table: TableSchema, key: NewForeignKey): string {
-  if (engine === "sqlite") throw new Error("SQLite no permite agregar relaciones a una tabla existente");
+  if (engine === "sqlite") throw new Error(t("relations.sqliteNoAdd"));
   const name = quoteIdent(foreignKeyName(table.name, key.columns));
   return `alter table ${qualifiedName(table)} add constraint ${name} ${foreignKeyClause(key)}`;
 }
 
 export function dropForeignKeySql(engine: DatabaseEngine, table: TableSchema, name: string): string {
-  if (engine === "sqlite") throw new Error("SQLite no permite quitar relaciones de una tabla existente");
+  if (engine === "sqlite") throw new Error(t("relations.sqliteNoDrop"));
   const verb = engine === "mysql" ? "drop foreign key" : "drop constraint";
   return `alter table ${qualifiedName(table)} ${verb} ${quoteIdent(name)}`;
 }

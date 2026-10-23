@@ -15,7 +15,7 @@ pub(crate) fn db_err(err: sqlx::Error) -> CoreError {
 }
 
 pub(crate) fn batch_err(index: usize, err: &sqlx::Error) -> CoreError {
-    CoreError::Database(format!("sentencia {}: {err}", index + 1))
+    CoreError::Statement { number: index + 1, message: err.to_string() }
 }
 
 pub(crate) fn quote_ident(name: &str) -> Result<String, CoreError> {

@@ -1,4 +1,5 @@
 import { defaultSafety, type ConnectionConfig, type DatabaseEngine, type SafetySettings, type SshAuth, type SshSettings, type TlsMode, type TlsSettings } from "../lib/api";
+import { t } from "../lib/i18n";
 
 export type Draft = {
   id: string;
@@ -142,7 +143,7 @@ export function toConfig(draft: Draft): ConnectionConfig {
   const group = draft.group.trim();
   return {
     id: draft.id,
-    name: draft.name.trim() || "Conexión",
+    name: draft.name.trim() || t("home.defaultConnectionName"),
     engine: draft.engine,
     database: draft.database.trim(),
     host: draft.engine !== "sqlite" ? draft.host.trim() : null,
