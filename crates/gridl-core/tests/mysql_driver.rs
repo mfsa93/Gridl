@@ -249,7 +249,7 @@ async fn mysql_introspects_keys_enums_and_auto_increment() {
     // A `_bin` collation is flagged like a binary string but reads as text.
     assert_eq!(row[14], SqlValue::Text("ABC".into()));
 
-    // The prepared protocol carries temporal values as packed bytes.
+    // With parameters the values read exactly as without them.
     let mut sink = VecSink(Vec::new());
     let with_params = QueryRequest::new(
         "query-params",
@@ -260,12 +260,12 @@ async fn mysql_introspects_keys_enums_and_auto_increment() {
         Arc::new(AtomicBool::new(false)),
     )
     .expect("request");
-    driver.query(&id, &with_params, &mut sink).await.expect("binary select");
+    driver.query(&id, &with_params, &mut sink).await.expect("select with parameters");
     assert_eq!(
         sink.0[0].rows[0],
         vec![
             SqlValue::Text("2024-03-09".into()),
-            SqlValue::Text("2024-03-09 13:05:07.12".into()),
+            SqlValue::Text("2024-03-09 13:05:07.120".into()),
             SqlValue::Text("-26:03:04".into()),
             SqlValue::Text("12345678901234567890.0123456789".into()),
         ]
@@ -535,5 +535,171 @@ async fn mysql_lists_foreign_keys() {
     let line = keys.iter().find(|key| key.name == "gi_line_order").expect("line fk");
     assert_eq!(line.columns, vec!["order_region".to_owned(), "order_id".to_owned()]);
     assert_eq!(line.ref_columns, vec!["region".to_owned(), "id".to_owned()]);
+    driver.disconnect(&id).await.expect("disconnect");
+}
+
+/// (column, type, sample, how MySQL itself prints it: "num" → col+0, "text" → CAST AS CHAR, "hex" → HEX).
+const MYSQL_TYPES: &[(&str, &str, &str, &str)] = &[
+    ("c_tinyint", "TINYINT", "-128", "num"),
+    ("c_utinyint", "TINYINT UNSIGNED", "255", "num"),
+    ("c_smallint", "SMALLINT", "-32768", "num"),
+    ("c_mediumint", "MEDIUMINT", "-8388608", "num"),
+    ("c_int", "INT", "-2147483648", "num"),
+    ("c_uint", "INT UNSIGNED", "4294967295", "num"),
+    ("c_bigint", "BIGINT", "-9223372036854775808", "num"),
+    ("c_ubigint", "BIGINT UNSIGNED", "18446744073709551615", "text"),
+    ("c_bool", "BOOLEAN", "TRUE", "num"),
+    ("c_bit", "BIT(10)", "b'1010101010'", "num"),
+    ("c_decimal", "DECIMAL(30,10)", "12345678901234567890.0123456789", "text"),
+    ("c_float", "FLOAT", "3.25", "num"),
+    ("c_double", "DOUBLE", "-1.5e300", "num"),
+    ("c_date", "DATE", "'2026-06-12'", "text"),
+    ("c_datetime", "DATETIME(6)", "'2026-06-12 10:00:00.123456'", "text"),
+    ("c_timestamp", "TIMESTAMP(3) NULL", "'2026-06-12 10:00:00.5'", "text"),
+    ("c_time", "TIME(3)", "'-838:59:59.000'", "text"),
+    ("c_time_long", "TIME", "'100:00:01'", "text"),
+    ("c_year", "YEAR", "2026", "num"),
+    ("c_char", "CHAR(5)", "'ab'", "text"),
+    ("c_varchar", "VARCHAR(20)", "'héllo ✓'", "text"),
+    ("c_binary", "BINARY(4)", "0xDEADBEEF", "hex"),
+    ("c_varbinary", "VARBINARY(8)", "0xDEADBEEF00", "hex"),
+    ("c_varbinary_text", "VARBINARY(8)", "'plain'", "text"),
+    ("c_tinyblob", "TINYBLOB", "0xFF00FF", "hex"),
+    ("c_blob", "BLOB", "0xCAFEBABE", "hex"),
+    ("c_mediumblob", "MEDIUMBLOB", "0x00", "hex"),
+    ("c_longblob", "LONGBLOB", "0xC3", "hex"),
+    ("c_tinytext", "TINYTEXT", "'tiny'", "text"),
+    ("c_text", "TEXT", "'línea 1\nlínea 2'", "text"),
+    ("c_mediumtext", "MEDIUMTEXT", "'medium'", "text"),
+    ("c_longtext", "LONGTEXT", "'long'", "text"),
+    ("c_enum", "ENUM('ok','sad')", "'sad'", "text"),
+    ("c_set", "SET('a','b','c')", "'a,c'", "text"),
+    ("c_json", "JSON", "'{\"a\": [1, 2.5, null]}'", "text"),
+    ("c_geometry", "GEOMETRY", "ST_GeomFromText('POINT(1 2)')", "hex"),
+    ("c_point", "POINT", "ST_GeomFromText('POINT(1.5 -2)')", "hex"),
+    ("c_linestring", "LINESTRING", "ST_GeomFromText('LINESTRING(0 0,1 1)')", "hex"),
+    ("c_polygon", "POLYGON", "ST_GeomFromText('POLYGON((0 0,1 1,1 0,0 0))')", "hex"),
+    ("c_multipoint", "MULTIPOINT", "ST_GeomFromText('MULTIPOINT((0 0),(1 1))')", "hex"),
+    (
+        "c_collection",
+        "GEOMETRYCOLLECTION",
+        "ST_GeomFromText('GEOMETRYCOLLECTION(POINT(1 1))')",
+        "hex",
+    ),
+];
+
+fn mysql_shown(value: &SqlValue) -> String {
+    match value {
+        SqlValue::Text(text) => text.clone(),
+        SqlValue::Int(value) => value.to_string(),
+        SqlValue::Float(value) => value.to_string(),
+        SqlValue::Bool(value) => {
+            if *value {
+                "1".into()
+            } else {
+                "0".into()
+            }
+        }
+        SqlValue::Bytes(bytes) => bytes.iter().map(|byte| format!("{byte:02X}")).collect(),
+        SqlValue::Null => "NULL".into(),
+    }
+}
+
+#[tokio::test]
+async fn mysql_reads_and_writes_back_every_type() {
+    let Some(target) = target() else { return };
+    let (driver, id) = open(&target, "mysql-types", false).await;
+    let columns: Vec<String> =
+        MYSQL_TYPES.iter().map(|(name, kind, _, _)| format!("{name} {kind}")).collect();
+    let names: Vec<&str> = MYSQL_TYPES.iter().map(|(name, ..)| *name).collect();
+    let samples: Vec<&str> = MYSQL_TYPES.iter().map(|(_, _, sample, _)| *sample).collect();
+    run(&driver, &id, "DROP TABLE IF EXISTS gridl_types").await;
+    run(&driver, &id, &format!("CREATE TABLE gridl_types (id INT PRIMARY KEY, {}, c_zero_date DATE, c_zero_datetime DATETIME)", columns.join(", "))).await;
+    run(
+        &driver,
+        &id,
+        &format!(
+            "INSERT INTO gridl_types (id, {}) VALUES (1, {})",
+            names.join(", "),
+            samples.join(", ")
+        ),
+    )
+    .await;
+    run(&driver, &id, "INSERT INTO gridl_types (id) VALUES (2)").await;
+    // Zero dates exist in old data even though strict mode refuses new ones.
+    run(&driver, &id, "SET SESSION sql_mode = ''").await;
+    run(&driver, &id, "UPDATE gridl_types SET c_zero_date = '0000-00-00', c_zero_datetime = '0000-00-00 00:00:00' WHERE id = 1").await;
+
+    let printed: Vec<String> = MYSQL_TYPES
+        .iter()
+        .map(|(name, _, _, how)| match *how {
+            "num" => format!("CAST({name} + 0 AS CHAR)"),
+            "hex" => format!("HEX({name})"),
+            _ => format!("CAST({name} AS CHAR)"),
+        })
+        .collect();
+    let expected =
+        run(&driver, &id, &format!("SELECT {} FROM gridl_types WHERE id = 1", printed.join(", ")))
+            .await;
+    let select = format!(
+        "SELECT {}, c_zero_date, c_zero_datetime FROM gridl_types ORDER BY id",
+        names.join(", ")
+    );
+    let rows = run(&driver, &id, &select).await;
+
+    let mut sink = VecSink(Vec::new());
+    let with_params = QueryRequest::new(
+        "query-params",
+        format!(
+            "SELECT {}, c_zero_date, c_zero_datetime FROM gridl_types WHERE id = ? ORDER BY id",
+            names.join(", ")
+        ),
+        vec![SqlValue::Int(1)],
+        DEFAULT_CHUNK_ROWS,
+        MAX_STREAM_ROWS,
+        Arc::new(AtomicBool::new(false)),
+    )
+    .expect("request");
+    driver.query(&id, &with_params, &mut sink).await.expect("select with parameters");
+    let binary: Vec<Vec<SqlValue>> = sink.0.into_iter().flat_map(|chunk| chunk.rows).collect();
+
+    for (index, (name, kind, _, _)) in MYSQL_TYPES.iter().enumerate() {
+        let SqlValue::Text(printed) = &expected[0][index] else {
+            panic!("{name}: printed {:?}", expected[0][index])
+        };
+        let shown = mysql_shown(&rows[0][index]);
+        let numeric = |text: &str| text.parse::<f64>().ok();
+        let same =
+            shown == *printed || (numeric(&shown).is_some() && numeric(&shown) == numeric(printed));
+        assert!(same, "{name} ({kind}) reads {shown:?}, MySQL prints {printed:?}");
+        assert_eq!(binary[0][index], rows[0][index], "{name} ({kind}) is the same with parameters");
+        assert_eq!(rows[1][index], SqlValue::Null, "{name} ({kind}) NULL");
+    }
+    let zero = names.len();
+    assert_eq!(rows[0][zero], SqlValue::Text("0000-00-00".into()));
+    assert_eq!(rows[0][zero + 1], SqlValue::Text("0000-00-00 00:00:00".into()));
+    assert_eq!(binary[0][zero], rows[0][zero], "zero date with parameters");
+    assert_eq!(binary[0][zero + 1], rows[0][zero + 1], "zero datetime with parameters");
+
+    // Saving a cell sends back what the grid shows, as the app does.
+    for (index, (name, kind, _, _)) in MYSQL_TYPES.iter().enumerate() {
+        let sql = format!("UPDATE gridl_types SET {name} = ? WHERE id = 1");
+        let batch = BatchRequest::new(vec![BatchStatement {
+            sql: sql.clone(),
+            params: vec![rows[0][index].clone()],
+        }])
+        .expect("batch");
+        driver
+            .execute_batch(&id, &batch)
+            .await
+            .unwrap_or_else(|err| panic!("{name} ({kind}): {err}"));
+    }
+    let again = run(&driver, &id, &select).await;
+    for (index, (name, kind, _, _)) in MYSQL_TYPES.iter().enumerate() {
+        assert_eq!(
+            again[0][index], rows[0][index],
+            "{name} ({kind}) is unchanged after saving it back"
+        );
+    }
     driver.disconnect(&id).await.expect("disconnect");
 }

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { activeSql, splitStatements, statementRanges } from "../editor/activeSql";
 import { setDialect, type ColumnDefinition, type TableSchema } from "../lib/api";
-import { createTableSql, deleteSql, insertSql, updateSql, type NewColumn } from "../workspace/changes";
+import { createTableSql, deleteSql, insertSql, postgresCast, updateSql, type NewColumn } from "../workspace/changes";
 import { addForeignKeySql, dropForeignKeySql, foreignKeyClause } from "../workspace/relations";
 
 const column = (name: string, dataType: string, extra: Partial<ColumnDefinition> = {}): ColumnDefinition => ({
@@ -65,6 +65,30 @@ describe("row edits", () => {
     expect(statement.sql).toBe('update "public"."items" set "name" = $1::text where "id" = $2::integer');
     expect(statement.params).toEqual([{ t: "text", v: "b" }, { t: "int", v: "7" }]);
   });
+  it("keeps lengths and arrays when saving Postgres values", () => {
+    const typed = table([
+      column("id", "integer", { primaryKey: true, nullable: false }),
+      column("code", "character(5)"),
+      column("flags", "boolean[]"),
+      column("seen", "timestamp(3) without time zone[]"),
+      column("amount", "numeric(12,2)"),
+    ]);
+    const original = { id: { t: "int", v: "1" } } as const;
+    const statement = updateSql("postgres", typed, original, {
+      code: { text: "ab", isNull: false },
+      flags: { text: "{t,f}", isNull: false },
+      seen: { text: "{2026-01-01 00:00:00}", isNull: false },
+      amount: { text: "1234.50", isNull: false },
+    });
+    expect(statement.sql).toBe('update "public"."items" set "code" = $1::character(5), "flags" = $2::boolean[], "seen" = $3::timestamp(3) without time zone[], "amount" = $4::numeric(12,2) where "id" = $5::integer');
+    expect(statement.params).toEqual([
+      { t: "text", v: "ab" },
+      { t: "text", v: "{t,f}" },
+      { t: "text", v: "{2026-01-01 00:00:00}" },
+      { t: "text", v: "1234.50" },
+      { t: "int", v: "1" },
+    ]);
+  });
   it("deletes by primary key", () => {
     const statement = deleteSql("sqlite", items, { id: { t: "int", v: "7" }, name: { t: "text", v: "a" } });
     expect(statement.sql).toBe('delete from "public"."items" where "id" = ?');
@@ -87,5 +111,36 @@ describe("foreign keys", () => {
     setDialect("mysql");
     expect(dropForeignKeySql("mysql", orders, "k")).toBe("alter table `public`.`items` drop foreign key `k`");
     expect(() => addForeignKeySql("sqlite", orders, key)).toThrow(/SQLite/);
+  });
+});
+
+describe("postgresCast", () => {
+  it("casts edited values to every kind of column type", () => {
+    expect(postgresCast("numeric")).toBe("numeric");
+    expect(postgresCast("numeric(12,2)")).toBe("numeric(12,2)");
+    expect(postgresCast("interval")).toBe("interval");
+    expect(postgresCast("time without time zone")).toBe("time without time zone");
+    expect(postgresCast("bit varying")).toBe("bit varying");
+    expect(postgresCast("inet")).toBe("inet");
+    expect(postgresCast("int4[]")).toBe("int4[]");
+    expect(postgresCast("INT4[]")).toBe("INT4[]");
+    expect(postgresCast("hstore")).toBe("hstore");
+    expect(postgresCast("billing.status")).toBe("billing.status");
+    expect(postgresCast('"Billing".status[]')).toBe('"Billing".status[]');
+    expect(postgresCast('public."Mixed Case"')).toBe('public."Mixed Case"');
+    expect(postgresCast("character(5)")).toBe("character(5)");
+    expect(postgresCast("bit(4)")).toBe("bit(4)");
+    expect(postgresCast("character varying(20)")).toBe("character varying(20)");
+    expect(postgresCast("timestamp(3) without time zone")).toBe("timestamp(3) without time zone");
+    expect(postgresCast("integer[][]")).toBe("integer[][]");
+    expect(postgresCast("character varying")).toBe("varchar");
+  });
+
+  it("leaves placeholders it cannot name alone", () => {
+    expect(postgresCast("ARRAY")).toBeNull();
+    expect(postgresCast("USER-DEFINED")).toBeNull();
+    expect(postgresCast("int4; drop table x")).toBeNull();
+    expect(postgresCast("text) or (1")).toBeNull();
+    expect(postgresCast('"unclosed')).toBeNull();
   });
 });

@@ -298,3 +298,132 @@ async fn sqlite_lists_foreign_keys() {
     assert_eq!(pair.ref_columns, vec!["x".to_owned(), "y".to_owned()]);
     driver.disconnect(&id).await.expect("disconnect");
 }
+
+/// SQLite stores each value with its own class whatever the column declares; every
+/// class must read back as itself in every kind of declared column.
+#[tokio::test]
+async fn sqlite_reads_and_writes_back_every_storage_class_in_every_column_type() {
+    let db = TempDb::new();
+    let driver = SqliteDriver::new();
+    let config = config(&db.path);
+    driver.connect(&config, None, None).await.expect("connect");
+    let id = config.connection_id().expect("id");
+    let declared = [
+        ("c_int", "INTEGER"),
+        ("c_real", "REAL"),
+        ("c_text", "TEXT"),
+        ("c_blob", "BLOB"),
+        ("c_num", "NUMERIC"),
+        ("c_decimal", "DECIMAL(10,2)"),
+        ("c_bool", "BOOLEAN"),
+        ("c_date", "DATETIME"),
+        ("c_json", "JSON"),
+        ("c_varchar", "VARCHAR(10)"),
+        ("c_any", ""),
+    ];
+    let samples = [
+        "42",
+        "-9223372036854775808",
+        "2.5",
+        "1e308",
+        "'héllo ✓'",
+        "'123'",
+        "'2026-06-12 10:00:00'",
+        "X'00FF'",
+        "X'68656C6C6F'",
+        "0",
+        "1",
+        "NULL",
+    ];
+    let columns: Vec<String> =
+        declared.iter().map(|(name, kind)| format!("{name} {kind}")).collect();
+    run(&driver, &id, &format!("CREATE TABLE t (id INTEGER PRIMARY KEY, {})", columns.join(", ")))
+        .await;
+    for (row, sample) in samples.iter().enumerate() {
+        let values = vec![*sample; declared.len()].join(", ");
+        let names: Vec<&str> = declared.iter().map(|(name, _)| *name).collect();
+        run(
+            &driver,
+            &id,
+            &format!("INSERT INTO t (id, {}) VALUES ({}, {values})", names.join(", "), row + 1),
+        )
+        .await;
+    }
+
+    let names: Vec<&str> = declared.iter().map(|(name, _)| *name).collect();
+    let select = format!("SELECT {} FROM t ORDER BY id", names.join(", "));
+    let rows: Vec<Vec<SqlValue>> =
+        run(&driver, &id, &select).await.into_iter().flat_map(|chunk| chunk.rows).collect();
+    // What SQLite stored: its class, its text, its bytes.
+    let probes: Vec<String> = names
+        .iter()
+        .map(|name| format!(
+                "typeof({name}), CASE typeof({name}) WHEN 'real' THEN printf('%!.17g', {name}) ELSE CAST({name} AS TEXT) END, hex({name})"
+            ))
+        .collect();
+    let stored: Vec<Vec<SqlValue>> =
+        run(&driver, &id, &format!("SELECT {} FROM t ORDER BY id", probes.join(", ")))
+            .await
+            .into_iter()
+            .flat_map(|chunk| chunk.rows)
+            .collect();
+
+    let text = |value: &SqlValue| match value {
+        SqlValue::Text(text) => text.clone(),
+        other => panic!("probe {other:?}"),
+    };
+    for (row, sample) in samples.iter().enumerate() {
+        for (column, (name, kind)) in declared.iter().enumerate() {
+            let class = text(&stored[row][column * 3]);
+            let value = &rows[row][column];
+            let ok = match class.as_str() {
+                "null" => *value == SqlValue::Null,
+                "integer" => {
+                    let expected: i64 = text(&stored[row][column * 3 + 1]).parse().expect("int");
+                    *value == SqlValue::Int(expected)
+                        || (*kind == "BOOLEAN"
+                            && (expected == 0 || expected == 1)
+                            && *value == SqlValue::Bool(expected == 1))
+                }
+                "real" => {
+                    let expected: f64 = text(&stored[row][column * 3 + 1]).parse().expect("real");
+                    *value == SqlValue::Float(expected)
+                }
+                "text" => *value == SqlValue::Text(text(&stored[row][column * 3 + 1])),
+                "blob" => {
+                    let hex = text(&stored[row][column * 3 + 2]);
+                    let bytes: Vec<u8> = (0..hex.len())
+                        .step_by(2)
+                        .map(|at| u8::from_str_radix(&hex[at..at + 2], 16).expect("hex"))
+                        .collect();
+                    *value == SqlValue::Bytes(bytes)
+                }
+                other => panic!("class {other}"),
+            };
+            assert!(ok, "{name} ({kind}) holding {sample} stored as {class} reads as {value:?}");
+        }
+    }
+
+    // Saving each cell back must keep its class and value.
+    for (row, _) in samples.iter().enumerate() {
+        for (column, (name, kind)) in declared.iter().enumerate() {
+            let batch = BatchRequest::new(vec![BatchStatement {
+                sql: format!("UPDATE t SET {name} = ? WHERE id = ?"),
+                params: vec![rows[row][column].clone(), SqlValue::Int(row as i64 + 1)],
+            }])
+            .expect("batch");
+            driver
+                .execute_batch(&id, &batch)
+                .await
+                .unwrap_or_else(|err| panic!("{name} ({kind}): {err}"));
+        }
+    }
+    let again: Vec<Vec<SqlValue>> =
+        run(&driver, &id, &format!("SELECT {} FROM t ORDER BY id", probes.join(", ")))
+            .await
+            .into_iter()
+            .flat_map(|chunk| chunk.rows)
+            .collect();
+    assert_eq!(again, stored, "every value keeps its class and content after saving it back");
+    driver.disconnect(&id).await.expect("disconnect");
+}

@@ -636,9 +636,20 @@ function isTextual(column: ColumnDefinition): boolean {
   return type === "text" || type.includes("char") || type === "string" || type === "citext";
 }
 
+/** Arrays arrive and are saved as their text form ({1,2}), whatever the element type. */
+function isArrayType(dataType: string): boolean {
+  return /\[\d*\]$/.test(dataType.trim()) || dataType.trim().toUpperCase() === "ARRAY";
+}
+
+/** Lower case, without a precision like (3), so `time(3) without time zone` reads as a time. */
+function plainType(column: ColumnDefinition): string {
+  return column.dataType.toLowerCase().replace(/\(\s*\d+(\s*,\s*\d+)?\s*\)/g, "").replace(/\s+/g, " ").trim();
+}
+
 function encodeCell(column: ColumnDefinition, raw: string): SqlValue {
   const text = raw.trim();
   const type = column.dataType.toLowerCase();
+  if (isArrayType(type)) return { t: "text", v: raw };
   const marker = canonicalTemporal(text);
   if (marker === "default" && (isTemporalColumn(column) || columnOptions(column).length > 0 || isBooleanColumn(column))) {
     return { t: "text", v: "default" };
@@ -707,7 +718,8 @@ export function formatTemporalPick(dataType: string, raw: string): string {
 }
 
 function temporalKind(column: ColumnDefinition): "date" | "time" | "timestamp" | null {
-  const type = column.dataType.toLowerCase();
+  if (isArrayType(column.dataType)) return null;
+  const type = plainType(column);
   if (type.includes("timestamp") || type.startsWith("datetime")) return "timestamp";
   if (type === "date" || type.startsWith("date ")) return "date";
   if (type === "time" || type.startsWith("time ") || type === "timetz") return "time";
@@ -715,7 +727,7 @@ function temporalKind(column: ColumnDefinition): "date" | "time" | "timestamp" |
 }
 
 function hasTimeZone(column: ColumnDefinition): boolean {
-  const type = column.dataType.toLowerCase();
+  const type = plainType(column);
   return type.includes("with time zone") || type === "timestamptz" || type === "timetz";
 }
 
@@ -738,9 +750,25 @@ function bind(engine: DatabaseEngine, params: SqlValue[], value: SqlValue, colum
   params.push(value);
   const token = engine === "postgres" ? `$${params.length}` : "?";
   if (engine !== "postgres") return token;
-  if (columnOptions(column).length > 0) return `${token}::${quoteTypeName(column.dataType)}`;
-  const cast = postgresCasts[column.dataType.toLowerCase()];
+  const cast = postgresCast(column.dataType) ?? (columnOptions(column).length > 0 ? quoteTypeName(column.dataType) : null);
   return cast ? `${token}::${cast}` : token;
+}
+
+/**
+ * The cast that turns a bound value into the column's type. Text params need it
+ * for every type that is not text (numeric(12,2), interval, inet, int4[], hstore…),
+ * or PostgreSQL rejects the comparison or assignment.
+ */
+export function postgresCast(dataType: string): string | null {
+  const type = dataType.trim();
+  const known = postgresCasts[type.toLowerCase()];
+  if (known) return known;
+  if (/^(array|user-defined)$/i.test(type)) return null;
+  // A type as format_type spells it: optionally schema-qualified, quoted or bare names,
+  // extra words (double precision, with time zone), a (precision, scale), array brackets.
+  const name = `(?:"(?:[^"]|"")+"|[a-z_][a-z0-9_$]*)`;
+  const expression = new RegExp(`^${name}(?:\\.${name})?(?: [a-z_]+)*(?:\\(\\d+(?:, ?\\d+)?\\))?(?: [a-z_]+)*(?:\\[\\d*\\])*$`, "i");
+  return expression.test(type) ? type : null;
 }
 
 function quoteTypeName(name: string): string {
