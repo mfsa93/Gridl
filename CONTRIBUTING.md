@@ -37,4 +37,13 @@ The per-environment safety rules (`crates/gridl-core/src/guard.rs`) are enforced
 
 Never store passwords in `ConnectionConfig`, in logs, or in the profiles JSON. Secrets go into the system keychain or live in memory only for the session.
 
-The app's interface text is in Spanish; documentation and code comments are in English.
+Documentation and code comments are in English.
+
+## Interface text
+
+Gridl speaks English and Spanish and follows the system language: Spanish when the first preferred language starts with `es`, English otherwise. Never hard-code a visible string, and never decide behavior by matching translated text; use an error code (`CodedError` in `frontend/src/lib/errors.ts`, `CoreError` variants in Rust) instead.
+
+- **Frontend:** add the key to both `frontend/src/locales/en.ts` and `frontend/src/locales/es.ts`, then use `t("area.key", { name })` from `frontend/src/lib/i18n.ts`. `es.ts` is typed against the keys of `en.ts`, so a missing translation fails `tsc`, and a test checks both have the same placeholders. Counts use a `.one` / `.other` pair and `plural("area.key", count)`. Format numbers and dates with `formatNumber`, `formatDate`, and `formatTime`, never with a fixed locale.
+- **Backend:** write both texts where the message is raised, with `gridl_core::tr!("English {value}", "Español {value}")`. Set `GRIDL_LANG=en` or `GRIDL_LANG=es` to force the backend language. Tests that check wording pick the language with `gridl_core::with_locale`, so they pass on any machine.
+
+Keep English short and follow macOS conventions: title case for menu items ("Open in New Window", "Check for Updates…"), sentence case for labels and messages.
