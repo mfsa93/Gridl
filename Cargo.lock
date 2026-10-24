@@ -2093,7 +2093,7 @@ dependencies = [
 
 [[package]]
 name = "gridl-core"
-version = "0.3.2"
+version = "0.4.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -2113,7 +2113,7 @@ dependencies = [
 
 [[package]]
 name = "gridl-desktop"
-version = "0.3.2"
+version = "0.4.0"
 dependencies = [
  "async-trait",
  "gridl-core",
