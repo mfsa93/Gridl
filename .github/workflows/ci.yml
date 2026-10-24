@@ -7,6 +7,7 @@ on:
   pull_request:
     paths-ignore:
       - "**/*.md"
+      - LICENSE
 
 # A newer push to the same branch or PR cancels the run still in progress.
 concurrency:
