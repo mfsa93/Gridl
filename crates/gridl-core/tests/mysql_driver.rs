@@ -199,8 +199,13 @@ async fn mysql_introspects_keys_enums_and_auto_increment() {
     let function = find(&schema, "gi_double", RelationKind::Function);
     assert_eq!(function.columns[0].name, "value");
     assert!(function.definition.as_deref().is_some_and(|body| body.contains("RETURNS int")));
+    assert_eq!(function.returns.as_deref(), Some("int"));
     let procedure = find(&schema, "gi_touch", RelationKind::Procedure);
     assert_eq!(procedure.columns.len(), 2);
+    assert_eq!(procedure.returns, None);
+    let modes: Vec<_> = procedure.columns.iter().map(|column| column.mode.as_deref()).collect();
+    assert_eq!(modes, vec![Some("IN"), Some("OUT")]);
+    assert_eq!(function.columns[0].mode.as_deref(), Some("IN"));
     let trigger = find(&schema, "gi_items_bi", RelationKind::Trigger);
     assert!(trigger.definition.as_deref().is_some_and(|body| body.contains("BEFORE INSERT")));
     let index = find(&schema, "gi_items.gi_items_note", RelationKind::Index);

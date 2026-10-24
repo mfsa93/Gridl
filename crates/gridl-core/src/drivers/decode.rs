@@ -15,6 +15,7 @@ pub(crate) fn column_defs(columns: &[impl Column]) -> Vec<ColumnDefinition> {
             primary_key: false,
             default_value: None,
             options: Vec::new(),
+            mode: None,
         })
         .collect()
 }

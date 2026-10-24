@@ -530,6 +530,24 @@ export function primaryKeys(table: TableSchema): ColumnDefinition[] {
   return table.columns.filter((column) => column.primaryKey);
 }
 
+/** A call ready to fill in: one value per argument, labelled with its name and type. */
+export function routineCallSql(routine: TableSchema, engine: DatabaseEngine): string {
+  const outputs = (mode: string | null | undefined) => mode === "OUT" || mode === "INOUT";
+  // A PostgreSQL function takes only its inputs; OUT parameters come back as the result.
+  const passed = routine.columns.filter((column) => !(routine.kind === "function" && column.mode === "OUT"));
+  const last = passed.length - 1;
+  const args = passed.map((column, index) => {
+    // MySQL hands OUT and INOUT values back through session variables.
+    const value = engine === "mysql" && outputs(column.mode) ? `@${/^\w+$/.test(column.name) ? column.name : quoteIdent(column.name)}` : (column.defaultValue ?? "NULL");
+    const mode = column.mode && column.mode !== "IN" ? ` ${column.mode}` : "";
+    return `  ${value}${index < last ? "," : ""} -- ${column.name} ${column.dataType}${mode}`;
+  });
+  const call = `${qualifiedName(routine)}(${args.length > 0 ? `\n${args.join("\n")}\n` : ""})`;
+  if (routine.kind === "procedure") return `CALL ${call};`;
+  // Set-returning functions read like a table.
+  return /^(setof|table)\b/i.test(routine.returns ?? "") ? `SELECT * FROM ${call};` : `SELECT ${call};`;
+}
+
 export function canEditRows(table: TableSchema, readOnly: boolean): boolean {
   return !readOnly && table.kind === "table" && primaryKeys(table).length > 0;
 }

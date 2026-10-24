@@ -273,6 +273,9 @@ pub struct ColumnDefinition {
     /// Closed set of values, such as the labels of a PostgreSQL enum.
     #[serde(default)]
     pub options: Vec<String>,
+    /// How a routine parameter passes its value: `IN`, `OUT`, `INOUT`, or `VARIADIC`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
 }
 
 /// Table, view, routine, or other catalog object.
@@ -309,6 +312,9 @@ pub struct TableSchema {
     /// Source of a routine, trigger, index, or view when the catalog provides it.
     #[serde(default)]
     pub definition: Option<String>,
+    /// Result type of a function, such as `numeric` or `TABLE(id integer)`.
+    #[serde(default)]
+    pub returns: Option<String>,
 }
 
 /// One IPC block of a streaming query.

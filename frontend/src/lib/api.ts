@@ -42,6 +42,8 @@ export type ColumnDefinition = {
   primaryKey: boolean;
   defaultValue: string | null;
   options: string[];
+  /** How a routine parameter passes its value: `IN`, `OUT`, `INOUT`, or `VARIADIC`. */
+  mode?: string | null;
 };
 
 export type RelationKind = "table" | "view" | "materialized" | "function" | "procedure" | "sequence" | "trigger" | "index";
@@ -52,6 +54,8 @@ export type TableSchema = {
   kind: RelationKind;
   columns: ColumnDefinition[];
   definition: string | null;
+  /** Result type of a function, such as `numeric` or `TABLE(id integer)`. */
+  returns?: string | null;
 };
 
 export type Environment = "local" | "development" | "staging" | "production";
