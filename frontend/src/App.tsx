@@ -1,5 +1,5 @@
 import { open, save } from "@tauri-apps/plugin-dialog";
-import { ArchiveRestore, ArrowLeft, Braces, Database, Eye, FastForward, Folder, PanelLeft, Pencil, Play, Plus, Search, TerminalSquare, Trash2, Upload, X } from "lucide-react";
+import { ArchiveRestore, ArrowLeft, Bookmark, Braces, CircleStop, FileCode, GitCompareArrows, Link2, Network, Route, Undo2, Database, Eye, FastForward, Folder, PanelLeft, Pencil, Play, Plus, Search, TerminalSquare, Trash2, Upload, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { splitStatements } from "./editor/activeSql";
 import { SqlDefinition } from "./editor/SqlDefinition";
@@ -9,12 +9,12 @@ import type { ConnectingState } from "./home/ConnectingStatus";
 import { ConnectionHome, type HomeCommand } from "./home/ConnectionHome";
 import { UpdateCenter } from "./home/UpdateCenter";
 import { toConfig, type Draft } from "./home/draft";
-import { cancelQuery, connect, createGroup, deleteGroup, deleteProfile, disconnect, errorMessage, checkSql, defaultSafety, executeBatch, GuardError, executeQuery, exportQuery, importCsv, backupDatabase, restoreDatabase, formatSqlValue, introspect, listForeignKeys, listProfiles, closeDiscarding, listenHere, openConnectionWindow, openHomeWindow, quitDiscarding, setUnsaved, qualifiedName, quoteIdent, saveConnection, setDialect, testConnection, writeExport, type BatchStatement, type BrowseKind, type ColumnDefinition, type ConnectionCatalog, type ConnectionConfig, type DatabaseEngine, type ForeignKey, type GuardInfo, type SqlValue, type TableSchema, type TestResult } from "./lib/api";
+import { cancelQuery, connect, createGroup, deleteGroup, deleteProfile, disconnect, errorMessage, checkSql, defaultSafety, executeBatch, GuardError, executeQuery, exportQuery, importCsv, backupDatabase, restoreDatabase, formatSqlValue, introspect, listForeignKeys, listProfiles, closeDiscarding, listenHere, openConnectionWindow, openHomeWindow, emptyTeam, teamState, teamLink, teamShare, teamUnshare, teamSaveQueries, type TeamState, quitDiscarding, setUnsaved, qualifiedName, quoteIdent, saveConnection, setDialect, testConnection, writeExport, type BatchStatement, type BrowseKind, type ColumnDefinition, type ConnectionCatalog, type ConnectionConfig, type DatabaseEngine, type ForeignKey, type GuardInfo, type SqlValue, type TableSchema, type TestResult } from "./lib/api";
 import { canEditRows, createSchemaSql, createTableSql, deleteSql, dropSchemaSql, insertSql, listSchemasSql, renameSchemaSql, routineCallSql, rowRecord, schemaNameFrom, updateSql, type ColumnDraft } from "./workspace/changes";
 import { CodedError, describeError, errorCode, isConnectionLost, type ShownError } from "./lib/errors";
 import { formatNumber, formatTime, plural, t } from "./lib/i18n";
 import { ConfirmDialog, NameDialog, TableDialog } from "./workspace/dialogs";
-import { exportRows, sqlLiteral, toTsv, type ExportFormat } from "./workspace/export";
+import { exportRows, toJson, sqlLiteral, toTsv, type ExportFormat } from "./workspace/export";
 import { nextSort, orderClause, whereClause, type TableFilter } from "./workspace/filters";
 import { clearHistory, forgetHistory, pushHistory, readHistory, removeHistory, toggleStar, type HistoryEntry } from "./workspace/history";
 import { environmentLabel } from "./lib/environments";
@@ -22,9 +22,21 @@ import { ContextMenu, CopyButton, ErrorPanel, GuardDialog, UnsavedDialog, Export
 import { ImportDialog, type ImportPlan } from "./workspace/ImportDialog";
 import { RelationsPanel } from "./workspace/RelationsPanel";
 import { findTable, keyForColumn, outgoingKeys, resolvedRefColumns } from "./workspace/relations";
+import { readSaved, removeSaved, saveQuery, suggestedName, withSaved, type SavedQuery } from "./workspace/saved";
+import { explainSql, parsePlan } from "./workspace/plan";
+import { PlanView } from "./workspace/PlanView";
+import { readTableState, writeTableStates } from "./workspace/tableState";
+import { bindParams, findParams } from "./editor/params";
+import { ParamsDialog } from "./workspace/ParamsDialog";
+import { linkTarget, parseLink, shareLink, type OpenLink } from "./workspace/links";
+import { ErDiagram } from "./workspace/ErDiagram";
+import { CompareView } from "./workspace/CompareView";
+import { QuickOpen } from "./workspace/QuickOpen";
+import { LogoLoader } from "./workspace/LogoLoader";
+import { ConnectionSwitcher } from "./workspace/ConnectionSwitcher";
 import { SchemaPicker } from "./workspace/SchemaPicker";
 import { StructureEditor } from "./workspace/StructureEditor";
-import { kindLabel, pageSizes, sqlTabId, countValue, clonePending, pendingEmpty, viewKey, viewLabel, primaryKeyList, emptyView, tableTabId, showsRows, objectGroups, schemaMap, describeTabChanges, pendingSummary, pastedRow, isHeaderRow, mergeColumns, structureKey, sameDisplayedRow, fieldsFromValues, fieldsFromDraft, namesFromTables, type TableQuery, type TablePage, type TabView, type TableTab, type PendingChanges, type PageStash, type UndoEntry, type WorkspaceDialog } from "./workspace/model";
+import { isSqlTab, kindLabel, largeTableRows, nextSqlTabId, pageSizes, pageStatus, rowEstimateSql, sqlTabId, sqlTabNumber, countValue, clonePending, pendingEmpty, viewKey, viewLabel, primaryKeyList, emptyView, tableTabId, showsRows, objectGroups, schemaMap, describeTabChanges, pendingSummary, pastedRow, isHeaderRow, mergeColumns, structureKey, sameDisplayedRow, fieldsFromValues, fieldsFromDraft, namesFromTables, scriptResultLabel, type ScriptResult, type TableQuery, type TablePage, type TabView, type TableTab, type PendingChanges, type PageStash, type UndoEntry, type WorkspaceDialog } from "./workspace/model";
 import { sessionKey, workspaceTabs, readSession, writeSession, readSchemaView, writeSchemaView, matchTabs, readPaneWidth, readResultsHeight, clampResults, clampPane, paneLimit } from "./workspace/session";
 import { PaneSplitter, TablePager, TreeBranch, ObjectIcon, TableLeaf } from "./workspace/chrome";
 
@@ -46,11 +58,34 @@ const schemaChange = /^\s*(create|alter|drop|rename|comment|truncate)\b/i;
 export function App() {
   const [screen, setScreen] = useState<"home" | "workspace">("home");
   const [catalog, setCatalog] = useState<ConnectionCatalog>(emptyCatalog);
+  const [switcherOpen, setSwitcherOpen] = useState(false);
+  const [quickOpen, setQuickOpen] = useState(false);
+  const [diagramOpen, setDiagramOpen] = useState(false);
+  const [compareOpen, setCompareOpen] = useState(false);
+  const [paramPrompt, setParamPrompt] = useState<{ tabId: string; statements: string[]; maxRows: number; names: string[] } | null>(null);
+  const [localQueries, setSavedQueries] = useState<SavedQuery[]>([]);
+  const [team, setTeam] = useState<TeamState>(emptyTeam);
+  const teamRef = useRef(team);
+  teamRef.current = team;
   const [active, setActive] = useState<ConnectionConfig | null>(null);
+  /** Saved queries of a team connection live in the team file; the others stay on this Mac. */
+  const sharedConnection = Boolean(active && team.connections.some((profile) => profile.id === active.id));
+  const savedQueries = useMemo(
+    () => (active && sharedConnection ? (team.queries[active.id] ?? []) : localQueries),
+    [active, localQueries, sharedConnection, team.queries],
+  );
+  const savedQueriesRef = useRef(savedQueries);
+  savedQueriesRef.current = savedQueries;
   const [tables, setTables] = useState<TableSchema[]>([]);
   const [foreignKeys, setForeignKeys] = useState<ForeignKey[]>([]);
   const [tableTabs, setTableTabs] = useState<TableTab[]>([]);
   const [paging, setPaging] = useState<Record<string, TablePage>>({});
+  const pagingRef = useRef(paging);
+  pagingRef.current = paging;
+  /** Latest load of each table tab; a count that finishes after a newer load is dropped. */
+  const loadToken = useRef<Record<string, number>>({});
+  /** Row count running in the background for each table tab. */
+  const countQuery = useRef<Record<string, string>>({});
   const [schemaChoice, setSchemaChoice] = useState("public");
   /** Postgres only: show every schema as a tree instead of the one picked above it. */
   const [allSchemas, setAllSchemas] = useState(false);
@@ -61,7 +96,20 @@ export function App() {
   const [dialog, setDialog] = useState<WorkspaceDialog>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [activeTabId, setActiveTabId] = useState(sqlTabId);
-  const [sqlSeed, setSqlSeed] = useState("");
+  /** Open SQL editor tabs, in order. */
+  const [sqlTabs, setSqlTabs] = useState<string[]>([sqlTabId]);
+  const sqlTabsRef = useRef(sqlTabs);
+  sqlTabsRef.current = sqlTabs;
+  const sqlTabLabel = (id: string) =>
+    sqlMeta[id]?.title || (sqlTabNumber(id) === 1 ? t("app.tabs.sqlEditor") : `${t("app.tabs.sqlEditor")} ${sqlTabNumber(id)}`);
+  /** Text each SQL tab's editor starts with when it mounts. */
+  const sqlSeeds = useRef<Record<string, string>>({});
+  /** Names of SQL tabs and the saved query each one holds, when it holds one. */
+  const [sqlMeta, setSqlMeta] = useState<Record<string, { title?: string; savedId?: string }>>({});
+  const sqlMetaRef = useRef(sqlMeta);
+  sqlMetaRef.current = sqlMeta;
+  /** Tabs whose text no longer matches the saved query they were opened from. */
+  const [sqlDirty, setSqlDirty] = useState<Record<string, boolean>>({});
   const [tablePane, setTablePane] = useState<"rows" | "structure">("rows");
   const [views, setViews] = useState<Record<string, TabView>>({
     [sqlTabId]: emptyView(t("app.empty.start")),
@@ -129,14 +177,24 @@ export function App() {
   const [explorerWidth, setExplorerWidth] = useState(() => readPaneWidth("gridl.explorer", 280));
   const [detailsWidth, setDetailsWidth] = useState(() => readPaneWidth("gridl.details", 260));
   const [resultsHeight, setResultsHeight] = useState(() => readResultsHeight());
-  const sqlStageRef = useRef<HTMLDivElement>(null);
   const workspaceRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [homeCommand, setHomeCommand] = useState<HomeCommand | null>(null);
   const commandNonce = useRef(0);
   const rowsByTab = useRef<Record<string, SqlValue[][]>>({ [sqlTabId]: [] });
   const rowHandles = useRef<Record<string, { current: SqlValue[][] }>>({});
-  const editorRef = useRef<SqlEditorHandle>(null);
+  const newSqlTabRef = useRef<(sql?: string, meta?: { title?: string }) => void>(() => undefined);
+  /** A gridl:// link waiting for its connection to open. */
+  const pendingLink = useRef<OpenLink | null>(null);
+  const restoreTableStateRef = useRef<(table: TableSchema) => number>(() => 100);
+  const editorRefs = useRef<Record<string, SqlEditorHandle | null>>({});
+  /** The SQL tab last in front: where "Use in editor" and the history write. */
+  const lastSqlTab = useRef(sqlTabId);
+  const editorOf = (id: string = lastSqlTab.current) => editorRefs.current[id] ?? null;
+  const relintEditors = () => {
+    for (const editor of Object.values(editorRefs.current)) editor?.relint();
+  };
+  const sqlStageRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const pendingLoads = useRef<TableSchema[]>([]);
   const workspaceState = useRef({ id: null as string | null, tabs: [] as TableTab[], activeTabId: sqlTabId });
   const saveEditsRef = useRef<() => void>(() => undefined);
@@ -178,6 +236,8 @@ export function App() {
   const resetTabs = () => {
     resetTableQueries();
     rowsByTab.current = { [sqlTabId]: [] };
+    setSqlTabs([sqlTabId]);
+    lastSqlTab.current = sqlTabId;
     rowHandles.current = {};
     setTableTabs([]);
     setPaging({});
@@ -213,14 +273,89 @@ export function App() {
     pendingRef.current = pending;
   });
 
+  // The team file can change under us (git pull, iCloud, a teammate): read it at start,
+  // when the window comes back to the front, and every 15 seconds.
+  useEffect(() => {
+    let lastModified: number | null | undefined;
+    const refresh = () => {
+      void teamState()
+        .then((next) => {
+          if (next.modified === lastModified && next.folder === teamRef.current.folder) return;
+          lastModified = next.modified;
+          setTeam(next);
+        })
+        .catch(() => undefined);
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 15_000);
+    window.addEventListener("focus", refresh);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refresh);
+    };
+  }, []);
+
+  // A shared connection the team changed (host, database, safety rules…) updates the copy
+  // saved here. The keychain accounts stay this Mac's own.
+  useEffect(() => {
+    const updates = team.connections.flatMap((shared) => {
+      const local = catalog.profiles.find((profile) => profile.id === shared.id);
+      if (!local) return [];
+      const merged: ConnectionConfig = { ...shared, credentialAccount: local.credentialAccount, ssh: { ...shared.ssh, credentialAccount: local.ssh.credentialAccount } };
+      return JSON.stringify(merged) === JSON.stringify(local) ? [] : [merged];
+    });
+    if (updates.length === 0) return;
+    void (async () => {
+      let next: ConnectionCatalog | null = null;
+      for (const config of updates) {
+        next = await saveConnection({ config, password: null, rememberPassword: false, sshSecret: null, rememberSshSecret: false, trustSshHost: false }).catch(() => null);
+      }
+      if (next) setCatalog(next);
+    })();
+  }, [catalog.profiles, team.connections]);
+
+  // A gridl:// link for this window's connection opens as a new tab, unrun.
+  useEffect(() => {
+    let stop = () => {};
+    void listenHere<OpenLink>("gridl-open-link", (event) => {
+      if (activeRef.current) newSqlTabRef.current(event.payload.sql, { title: event.payload.title || undefined });
+    })
+      .then((unlisten) => {
+        stop = unlisten;
+      })
+      .catch(() => undefined);
+    return () => stop();
+  }, []);
+  useEffect(() => {
+    const link = pendingLink.current;
+    if (!active || !link) return;
+    pendingLink.current = null;
+    newSqlTabRef.current(link.sql, { title: link.title || undefined });
+  }, [active]);
+
+  // Connections saved in another window show up the next time the list opens.
+  useEffect(() => {
+    if (!switcherOpen) return;
+    void listProfiles().then(setCatalog).catch(() => undefined);
+  }, [switcherOpen]);
+
+  /** Every SQL tab's current text, for the saved session. */
+  const sqlSnapshot = (id: string) => {
+    const saved = readSession(id)?.sqlTabs ?? [];
+    const sqlTabsSaved = sqlTabsRef.current.map((tab) => ({
+      id: tab,
+      sql: editorRefs.current[tab]?.getValue() ?? sqlSeeds.current[tab] ?? saved.find((item) => item.id === tab)?.sql ?? "",
+      ...sqlMetaRef.current[tab],
+    }));
+    return { sql: sqlTabsSaved[0]?.sql ?? "", sqlTabs: sqlTabsSaved };
+  };
+
   const saveWorkspace = (id: string) => {
     const state = workspaceState.current;
-    writeSession(id, {
-      sql: editorRef.current?.getValue() ?? readSession(id)?.sql ?? "",
-      activeTab: state.activeTabId,
-      tabs: workspaceTabs(state.tabs),
-    });
+    writeSession(id, { ...sqlSnapshot(id), activeTab: state.activeTabId, tabs: workspaceTabs(state.tabs) });
   };
+  const saveWorkspaceRef = useRef(saveWorkspace);
+  saveWorkspaceRef.current = saveWorkspace;
 
   useEffect(() => {
     let stop = () => {};
@@ -234,6 +369,18 @@ export function App() {
         reloadRef.current();
         return;
       }
+      if (kind === "quick-open") {
+        if (activeRef.current) setQuickOpen(true);
+        return;
+      }
+      if (kind === "new-sql-tab") {
+        if (activeRef.current) newSqlTabRef.current("");
+        return;
+      }
+      if (kind === "open-connection") {
+        if (activeRef.current) setSwitcherOpen(true);
+        return;
+      }
       if (kind !== "new-connection" && kind !== "new-group") return;
       // Working in a connection: open the form in a new window and keep this one as it is.
       if (activeRef.current) {
@@ -245,7 +392,7 @@ export function App() {
         setInTransaction(false);
         const current = activeRef.current;
         if (current) {
-          saveWorkspace(current.id);
+          saveWorkspaceRef.current(current.id);
           void disconnect(current.id).catch(() => undefined);
         }
         activeQuery.current = null;
@@ -255,6 +402,8 @@ export function App() {
         setTables([]);
         resetTableQueriesRef.current();
         rowsByTab.current = { [sqlTabId]: [] };
+        setSqlTabs([sqlTabId]);
+        lastSqlTab.current = sqlTabId;
         rowHandles.current = {};
         setTableTabs([]);
         setPaging({});
@@ -290,6 +439,18 @@ export function App() {
         const wanted = new URLSearchParams(window.location.hash.slice(1)).get("connect");
         const profile = wanted ? next.profiles.find((item) => item.id === wanted) : undefined;
         if (profile) void openSavedRef.current(profile);
+        // A window opened for a gridl:// link connects, then opens the link's SQL in a tab.
+        const linkText = new URLSearchParams(window.location.hash.slice(1)).get("link");
+        const link = linkText ? parseLink(linkText) : null;
+        if (link) {
+          const target = linkTarget(link, next.profiles);
+          if (target) {
+            pendingLink.current = link;
+            void openSavedRef.current(target);
+          } else {
+            setError(t("app.link.unknown", { name: link.name || link.connection }));
+          }
+        }
         // A window opened by ⌘N from a connection carries the command: #command=new-connection.
         const command = new URLSearchParams(window.location.hash.slice(1)).get("command");
         if (command === "new-connection" || command === "new-group") {
@@ -318,18 +479,27 @@ export function App() {
   const enter = (config: ConnectionConfig, nextTables: TableSchema[]) => {
     const saved = readSession(config.id);
     const tabs = matchTabs(saved, nextTables);
-    const nextTab = saved && (saved.activeTab === sqlTabId || tabs.some((tab) => tab.id === saved.activeTab)) ? saved.activeTab : sqlTabId;
+    const savedSql = saved?.sqlTabs ?? [{ id: sqlTabId, sql: saved?.sql ?? "" }];
+    const sqlIds = savedSql.map((tab) => tab.id);
+    const nextTab = saved && (sqlIds.includes(saved.activeTab) || tabs.some((tab) => tab.id === saved.activeTab)) ? saved.activeTab : sqlIds[0];
     setDialect(config.engine);
     setActive(config);
     setTables(nextTables);
     setForeignKeys([]);
     void listForeignKeys(config.id).then(setForeignKeys).catch(() => undefined);
     setHistory(readHistory(config.id));
+    setSavedQueries(readSaved(config.id));
     resetTableQueries();
     setError(null);
     setObjectQuery("");
-    rowsByTab.current = { [sqlTabId]: [] };
+    rowsByTab.current = Object.fromEntries(sqlIds.map((id) => [id, []]));
     rowHandles.current = {};
+    sqlSeeds.current = Object.fromEntries(savedSql.map((tab) => [tab.id, tab.sql]));
+    setSqlMeta(Object.fromEntries(savedSql.map((tab) => [tab.id, { title: tab.title, savedId: tab.savedId }])));
+    setSqlDirty({});
+    editorRefs.current = {};
+    setSqlTabs(sqlIds);
+    lastSqlTab.current = isSqlTab(nextTab) ? nextTab : sqlIds[0];
     setTableTabs(tabs);
     setPaging({});
     const schemaView = readSchemaView(config.id);
@@ -343,8 +513,7 @@ export function App() {
     setFormError(null);
     setActiveTabId(nextTab);
     setSelectedTable(tabs.find((tab) => tab.id === nextTab)?.table ?? null);
-    setViews({ [sqlTabId]: emptyView(t("app.empty.start")) });
-    setSqlSeed(saved?.sql ?? "");
+    setViews(Object.fromEntries(sqlIds.map((id) => [id, emptyView(t("app.empty.start"))])));
     pendingLoads.current = tabs.filter((tab) => showsRows(tab.table)).map((tab) => tab.table);
     setDbSchemas(namesFromTables(nextTables));
     if (config.engine === "postgres") void readSchemas(config.id).then(setDbSchemas).catch(() => undefined);
@@ -543,7 +712,7 @@ export function App() {
       const next = await introspect(active.id);
       setTables(next);
       void listForeignKeys(active.id).then(setForeignKeys).catch(() => undefined);
-      editorRef.current?.relint();
+      relintEditors();
       setTableTabs((current) => current.map((tab) => {
         const fresh = next.find((table) => tableTabId(table) === tab.id);
         return fresh ? { ...tab, table: fresh } : tab;
@@ -556,7 +725,7 @@ export function App() {
     } catch (caught) {
       setViews((current) => ({
         ...current,
-        [sqlTabId]: { ...(current[sqlTabId] ?? emptyView()), status: errorMessage(caught) },
+        [lastSqlTab.current]: { ...(current[lastSqlTab.current] ?? emptyView()), status: errorMessage(caught) },
       }));
     }
   };
@@ -609,10 +778,16 @@ export function App() {
     }
   }, [active, guarded]);
 
-  const runQuery = useCallback(async (tabId = sqlTabId, sql?: string | string[], maxRows = editorRowSteps[0]) => {
+  const runQuery = useCallback(async (tabId: string, sql?: string | string[], maxRows = editorRowSteps[0], values?: Record<string, SqlValue>) => {
     if (!active || running) return;
-    const requested = Array.isArray(sql) ? sql : [sql ?? editorRef.current?.getActiveSql() ?? ""];
+    const requested = Array.isArray(sql) ? sql : [sql ?? editorRefs.current[tabId]?.getActiveSql() ?? ""];
     const statements = requested.map((item) => item.trim()).filter(Boolean);
+    // :name parameters are asked for first, then the same run starts again with their values.
+    const names = [...new Set(statements.flatMap((statement) => findParams(statement, active.engine)))];
+    if (names.length > 0 && !values) {
+      setParamPrompt({ tabId, statements, maxRows, names });
+      return;
+    }
     if (statements.length === 0) {
       setViews((current) => ({
         ...current,
@@ -633,6 +808,8 @@ export function App() {
     let changedSchema = false;
     let failedSql: string | null = null;
     let scriptAuthorized = false;
+    // A script keeps every statement's result; a single statement needs none.
+    const results: ScriptResult[] = [];
     try {
       let result: Awaited<ReturnType<typeof executeQuery>> | null = null;
       for (let index = 0; index < total; index += 1) {
@@ -643,8 +820,9 @@ export function App() {
         rows.length = 0;
         const prefix = total > 1 ? `${index + 1}/${total} · ` : "";
         setViews((current) => ({ ...current, [tabId]: { columns: [], rowCount: 0, status: `${prefix}${t("app.status.running")}`, error: null, pending: true, ran: true } }));
+        const bound = values ? bindParams(statement, active.engine, values) : { sql: statement, params: [] };
         const execute = (authorized: boolean) => executeQuery(
-          { connectionId, queryId: thisQuery, sql: statement, params: [], chunkRows: 500, authorized, maxRows },
+          { connectionId, queryId: thisQuery, sql: bound.sql, params: bound.params, chunkRows: 500, authorized, maxRows },
           (chunk) => {
               if (chunk.queryId !== thisQuery) return;
               if (chunk.rows.length > 0) rows.push(...chunk.rows);
@@ -667,10 +845,12 @@ export function App() {
         } catch (caught) {
           setHistory(pushHistory(connectionId, { sql: statement, at: Date.now(), durationMs: null, ok: false }));
           failedSql = statement;
+          if (total > 1) results.push({ sql: statement, columns: [], rows: [], rowsAffected: 0, durationMs: 0, error: describeError(caught, statement, active.engine) });
           if (total === 1) throw caught;
           throw new Error(t("app.error.statement", { index: index + 1, total, error: errorMessage(caught) }), { cause: caught });
         }
         setHistory(pushHistory(connectionId, { sql: statement, at: Date.now(), durationMs: result.durationMs, ok: true }));
+        if (total > 1) results.push({ sql: statement, columns: result.columns, rows: rows.slice(), rowsAffected: result.rowsAffected, durationMs: result.durationMs });
         affected += result.rowsAffected;
         if (schemaChange.test(statement)) changedSchema = true;
         if (/^\s*(begin|start\s+transaction)\b/i.test(statement)) setInTransaction(true);
@@ -704,6 +884,8 @@ export function App() {
           pending: false,
           ran: true,
           more,
+          results: results.length > 1 ? results : undefined,
+          shown: results.length > 1 ? results.length - 1 : undefined,
         },
       }));
     } catch (caught) {
@@ -712,7 +894,17 @@ export function App() {
         const at = formatTime(new Date());
         setViews((current) => ({
           ...current,
-          [tabId]: { columns: [], rowCount: 0, status: t("app.status.errorAt", { time: at }), error: shown, pending: false, ran: true },
+          [tabId]: {
+            columns: [],
+            rowCount: 0,
+            status: t("app.status.errorAt", { time: at }),
+            error: shown,
+            pending: false,
+            ran: true,
+            // The statements that ran before the failure stay one click away.
+            results: results.length > 1 ? results : undefined,
+            shown: results.length > 1 ? results.length - 1 : undefined,
+          },
         }));
       }
     } finally {
@@ -723,38 +915,155 @@ export function App() {
     }
     if (changedSchema) {
       refreshSchemaRef.current();
-      editorRef.current?.relint();
+      for (const editor of Object.values(editorRefs.current)) editor?.relint();
     }
   }, [active, askGuard, running]);
 
-  const formatEditor = () => {
+  const formatEditor = (tabId: string) => {
     try {
-      editorRef.current?.format();
+      editorOf(tabId)?.format();
     } catch (caught) {
-      setStatus(sqlTabId, t("app.status.formatFailed", { error: errorMessage(caught) }));
+      setStatus(tabId, t("app.status.formatFailed", { error: errorMessage(caught) }));
     }
   };
 
-  const runScript = () => {
-    const statements = splitStatements(editorRef.current?.getValue() ?? "");
-    void runQuery(sqlTabId, statements);
+  /** Asks the database how it would run the statement under the cursor, without running it. */
+  const explainQuery = async (tabId: string) => {
+    if (!active || running) return;
+    const statement = editorOf(tabId)?.getActiveSql().trim() ?? "";
+    if (!statement) {
+      setStatus(tabId, t("app.status.noSql"));
+      return;
+    }
+    const queryId = crypto.randomUUID();
+    activeQuery.current = queryId;
+    runningTab.current = tabId;
+    setRunning(true);
+    setViews((current) => ({ ...current, [tabId]: { columns: [], rowCount: 0, status: t("app.plan.running"), error: null, pending: true, ran: true } }));
+    try {
+      const rows: SqlValue[][] = [];
+      const result = await executeQuery(
+        { connectionId: active.id, queryId, sql: explainSql(active.engine, statement), params: [], chunkRows: 500 },
+        (chunk) => {
+          if (chunk.queryId === queryId) rows.push(...chunk.rows);
+        },
+      );
+      const plan = parsePlan(active.engine, rows);
+      setViews((current) => ({
+        ...current,
+        [tabId]: { columns: [], rowCount: 0, status: `${t("app.plan.title")} · ${result.durationMs} ms`, error: null, pending: false, ran: true, plan },
+      }));
+    } catch (caught) {
+      setViews((current) => ({
+        ...current,
+        [tabId]: { columns: [], rowCount: 0, status: t("app.status.error"), error: describeError(caught, statement, active.engine), pending: false, ran: true },
+      }));
+    } finally {
+      if (activeQuery.current === queryId) {
+        setRunning(false);
+        runningTab.current = null;
+      }
+    }
+  };
+
+  const runScript = (tabId: string) => {
+    const statements = splitStatements(editorOf(tabId)?.getValue() ?? "");
+    void runQuery(tabId, statements);
+  };
+
+  const newSqlTab = (sql = "", meta: { title?: string; savedId?: string } = {}) => {
+    const id = nextSqlTabId(sqlTabsRef.current);
+    sqlSeeds.current[id] = sql;
+    setSqlMeta((current) => ({ ...current, [id]: meta }));
+    rowsByTab.current[id] = [];
+    setViews((current) => ({ ...current, [id]: emptyView(t("app.empty.start")) }));
+    setSqlTabs((current) => [...current, id]);
+    lastSqlTab.current = id;
+    setActiveTabId(id);
+  };
+
+  newSqlTabRef.current = (sql, meta) => newSqlTab(sql, meta);
+
+  /** What a script's statement without rows did, when that statement is on screen. */
+  const pickedWrite = (view: TabView) => {
+    const picked = view.results?.[view.shown ?? -1];
+    if (!picked || picked.error || picked.columns.length > 0) return null;
+    return `${plural("app.status.rowsAffected", picked.rowsAffected)} · ${picked.durationMs} ms`;
+  };
+
+  /** Puts one statement's result of the last script back on screen. */
+  const showResult = (tabId: string, index: number) => {
+    const view = views[tabId];
+    const result = view?.results?.[index];
+    if (!view || !result) return;
+    // The grid reads this array through a handle, so it is refilled in place.
+    const rows = rowsByTab.current[tabId] ?? [];
+    rows.length = 0;
+    for (const row of result.rows) rows.push(row);
+    rowsByTab.current[tabId] = rows;
+    setFocusedRow((current) => (current?.tab === tabId ? null : current));
+    setViews((current) => ({
+      ...current,
+      [tabId]: { ...view, columns: result.columns, rowCount: result.rows.length, error: result.error ?? null, shown: index },
+    }));
+  };
+
+  /** Opens a saved query in its own tab, or goes back to the tab that already holds it. */
+  const openSavedQuery = (query: SavedQuery) => {
+    const holder = sqlTabsRef.current.find((tab) => sqlMetaRef.current[tab]?.savedId === query.id);
+    if (holder) focusTab(holder);
+    else newSqlTab(query.sql, { title: query.name, savedId: query.id });
+  };
+
+  const closeSqlTab = (id: string) => {
+    const open = sqlTabsRef.current;
+    if (open.length <= 1) return;
+    if (runningTab.current === id) return;
+    const text = editorOf(id)?.getValue() ?? "";
+    if (text.trim() && !window.confirm(t("app.sqlTabs.confirmClose", { name: sqlTabLabel(id) }))) return;
+    const index = open.indexOf(id);
+    const remaining = open.filter((tab) => tab !== id);
+    const neighbour = remaining[Math.min(index, remaining.length - 1)] ?? remaining[0];
+    delete editorRefs.current[id];
+    delete sqlSeeds.current[id];
+    setSqlMeta((current) => {
+      const next = { ...current };
+      delete next[id];
+      return next;
+    });
+    delete rowsByTab.current[id];
+    delete rowHandles.current[id];
+    setViews((current) => {
+      const next = { ...current };
+      delete next[id];
+      return next;
+    });
+    setFocusedRow((current) => (current?.tab === id ? null : current));
+    setSqlTabs(remaining);
+    if (lastSqlTab.current === id) lastSqlTab.current = neighbour;
+    setActiveTabId((current) => (current === id ? neighbour : current));
   };
 
   const queryQueue = useRef(Promise.resolve());
-  const collectQuery = useCallback(async (sql: string, chunkRows = 100) => {
+  const collectQuery = useCallback(async (sql: string, options: { skip?: () => boolean; background?: (queryId: string) => void } = {}) => {
     if (!active) throw new Error(t("app.error.noConnection"));
     const connectionId = active.id;
+    const chunkRows = 100;
     const run = async () => {
+      // A query that is no longer wanted by the time its turn comes is dropped.
+      if (options.skip?.()) return null;
       let result: Awaited<ReturnType<typeof executeQuery>> | null = null;
       let rows: SqlValue[][] = [];
       let columns: ColumnDefinition[] = [];
       for (let attempt = 0; attempt < 2; attempt += 1) {
         const queryId = crypto.randomUUID();
-        activeQuery.current = queryId;
+        // Background reads (row counts) report their id instead of taking over the Cancel button.
+        if (options.background) options.background(queryId);
+        else activeQuery.current = queryId;
         rows = [];
         columns = [];
         result = await executeQuery(
-          { connectionId, queryId, sql, params: [], chunkRows },
+          { connectionId, queryId, sql, params: [], chunkRows, browse: true },
           (chunk) => {
             if (chunk.queryId !== queryId) return;
             if (chunk.index === 0 && chunk.columns.length > 0) columns = chunk.columns;
@@ -776,7 +1085,41 @@ export function App() {
     return queued;
   }, [active]);
 
-  const loadTable = useCallback(async (table: TableSchema, page: number, pageSize: number, keepPending = false, discard = false, retried = false): Promise<void> => {
+  /** Counts the rows of the shown query after its page is on screen, without holding the grid. */
+  const countRows = useCallback(async (table: TableSchema, shownPage: TablePage, where: string, durationMs: number, token: number, exact: boolean) => {
+    if (!active) return;
+    const id = tableTabId(table);
+    const current = () => loadToken.current[id] === token;
+    const update = (total: number | null, approximate: boolean) => {
+      if (!current()) return;
+      const next: TablePage = { ...shownPage, total, approximate };
+      setPaging((paged) => ({ ...paged, [id]: next }));
+      setViews((views) => (views[id] ? { ...views, [id]: { ...views[id], status: pageStatus(next, Boolean(where), durationMs) } } : views));
+    };
+    try {
+      // Large tables without a filter show the catalog's estimate: counting them reads every row.
+      const estimateSql = where || exact ? null : rowEstimateSql(table, active.engine);
+      if (estimateSql) {
+        const estimated = await collectQuery(estimateSql, { skip: () => !current(), background: (queryId) => (countQuery.current[id] = queryId) });
+        const estimate = estimated ? countValue(estimated.rows[0]?.[0]) : 0;
+        if (estimate >= largeTableRows) {
+          update(estimate, true);
+          return;
+        }
+      }
+      if (!current()) return;
+      const counted = await collectQuery(`select count(*) as total from ${qualifiedName(table)}${where}`, { skip: () => !current(), background: (queryId) => (countQuery.current[id] = queryId) });
+      if (!counted || counted.result.cancelled) return;
+      update(countValue(counted.rows[0]?.[0]), false);
+    } catch {
+      // The rows are already shown; a failed count only leaves the total unknown.
+      update(null, false);
+    } finally {
+      if (current()) delete countQuery.current[id];
+    }
+  }, [active, collectQuery]);
+
+  const loadTable = useCallback(async (table: TableSchema, page: number, pageSize: number, keepPending = false, discard = false, retried = false, keepTotal = false): Promise<void> => {
     if (!active || writeLock.current) return;
     const id = tableTabId(table);
     const size = pageSizes.includes(pageSize) ? pageSize : 100;
@@ -802,48 +1145,53 @@ export function App() {
       });
     }
     runningTab.current = id;
+    const token = (loadToken.current[id] ?? 0) + 1;
+    loadToken.current[id] = token;
+    // A count still running for the previous load would hold this one back.
+    const staleCount = countQuery.current[id];
+    if (staleCount) {
+      delete countQuery.current[id];
+      void cancelQuery(staleCount).catch(() => undefined);
+    }
     setViews((current) => ({
       ...current,
-      [id]: { ...(current[id] ?? emptyView()), status: t("app.status.countingRows"), error: null },
+      [id]: { ...(current[id] ?? emptyView()), status: t("app.status.loading"), error: null },
     }));
     setRunning(true);
     try {
       const query = tableQueryRef.current[id];
       const where = whereClause(query?.filters ?? [], active.engine);
       const order = orderClause(table, query?.sort ?? null);
-      const counted = await collectQuery(`select count(*) as total from ${qualifiedName(table)}${where}`);
-      if (counted.result.cancelled && counted.rows.length === 0) return;
-      const total = countValue(counted.rows[0]?.[0]);
-      const lastPage = Math.max(0, Math.ceil(total / size) - 1);
-      const nextPage = Math.min(Math.max(0, page), lastPage);
+      // The page comes first so rows show at once; the total is counted after.
+      const nextPage = Math.max(0, page);
       const offset = nextPage * size;
-      setViews((current) => ({
-        ...current,
-        [id]: { ...(current[id] ?? emptyView()), status: t("app.status.loading") },
-      }));
       const loaded = await collectQuery(
         `select * from ${qualifiedName(table)}${where}${order} limit ${size} offset ${offset}`,
       );
-      if (loaded.result.cancelled && loaded.rows.length === 0) return;
+      if (!loaded || (loaded.result.cancelled && loaded.rows.length === 0)) return;
+      if (loaded.rows.length === 0 && nextPage > 0) {
+        // Past the end, e.g. after deleting the last page's rows: go to the last page there is.
+        const counted = await collectQuery(`select count(*) as total from ${qualifiedName(table)}${where}`);
+        const last = Math.max(0, Math.ceil(countValue(counted?.rows[0]?.[0]) / size) - 1);
+        if (last < nextPage) {
+          await loadTable(table, last, size, true, discard, retried);
+          return;
+        }
+      }
       const bucket = rowsByTab.current[id] ?? [];
       bucket.length = 0;
       for (const row of loaded.rows) bucket.push(row);
       rowsByTab.current[id] = bucket;
-      const from = total === 0 ? 0 : offset + 1;
-      const to = offset + loaded.rows.length;
-      const range = total === 0
-        ? where ? t("app.status.noMatches") : plural("common.rows", 0)
-        : t("app.status.range", { from: formatNumber(from), to: formatNumber(to), total: formatNumber(total) });
       const columns = mergeColumns(loaded.columns, table);
+      // Moving between pages of the same query keeps the total already counted.
+      const known = keepTotal ? pagingRef.current[id] : undefined;
+      const reuse = known !== undefined && known.total !== null;
+      const shownPage: TablePage = { page: nextPage, pageSize: size, shown: loaded.rows.length, total: reuse ? known.total : null, approximate: reuse ? known.approximate : false };
       setViews((current) => ({
         ...current,
-        [id]: {
-          columns,
-          rowCount: loaded.rows.length,
-          status: `${range} · ${loaded.result.durationMs} ms`,
-        },
+        [id]: { columns, rowCount: loaded.rows.length, status: pageStatus(shownPage, Boolean(where), loaded.result.durationMs) },
       }));
-      setPaging((current) => ({ ...current, [id]: { page: nextPage, pageSize: size, total } }));
+      setPaging((current) => ({ ...current, [id]: shownPage }));
       const key = viewKey(nextPage, size, query);
       loadedPage.current[id] = { key, label: viewLabel(nextPage, query), columns };
       // Back on a page with stashed edits: restore them if the rows are still the same.
@@ -854,6 +1202,7 @@ export function App() {
         pendingRef.current = next;
         setPending(next);
       }
+      if (!reuse) void countRows(table, shownPage, where, loaded.result.durationMs, token, false);
     } catch (caught) {
       // A page load is a read: after a dropped connection, reconnect and try once more.
       if (!retried && isConnectionLost(errorMessage(caught))) {
@@ -879,7 +1228,7 @@ export function App() {
         runningTab.current = null;
       }
     }
-  }, [active, collectQuery, putStashes]);
+  }, [active, collectQuery, countRows, putStashes]);
 
   const forgetTab = (id: string) => {
     if (stashRef.current[id]) {
@@ -926,19 +1275,27 @@ export function App() {
     if (!active) return undefined;
     const loads = pendingLoads.current;
     pendingLoads.current = [];
-    for (const table of loads) void loadTable(table, 0, 100);
+    for (const table of loads) void loadTable(table, 0, restoreTableStateRef.current(table));
     return undefined;
   }, [active, loadTable]);
 
   useEffect(() => {
     if (!active) return undefined;
-    writeSession(active.id, {
-      sql: editorRef.current?.getValue() ?? readSession(active.id)?.sql ?? "",
-      activeTab: activeTabId,
-      tabs: workspaceTabs(tableTabs),
-    });
+    writeSession(active.id, { ...sqlSnapshot(active.id), activeTab: activeTabId, tabs: workspaceTabs(tableTabs) });
     return undefined;
-  }, [active, activeTabId, tableTabs]);
+    // sqlTabs is read through its ref; listing it re-saves when tabs open or close.
+  }, [active, activeTabId, tableTabs, sqlTabs]);
+
+  // Each open table remembers its filters, sort and page size for the next visit.
+  useEffect(() => {
+    if (!active) return;
+    const states = Object.fromEntries(
+      tableTabs
+        .filter((tab) => paging[tab.id])
+        .map((tab) => [tab.id, { ...(tableQueries[tab.id] ?? { filters: [], sort: null }), pageSize: paging[tab.id]?.pageSize }]),
+    );
+    writeTableStates(active.id, states);
+  }, [active, tableTabs, tableQueries, paging]);
 
   const pinTable = (id: string) => {
     setTableTabs((current) => {
@@ -947,6 +1304,19 @@ export function App() {
       return current.map((item) => (item.id === id ? { ...item, pinned: true } : item));
     });
   };
+
+  /** Puts back a table's last filters and sort; returns its last page size. */
+  const restoreTableState = (table: TableSchema): number => {
+    const id = tableTabId(table);
+    const saved = active ? readTableState(active.id, id, table) : null;
+    if (saved && !tableQueryRef.current[id]) {
+      tableQueryRef.current = { ...tableQueryRef.current, [id]: { filters: saved.filters, sort: saved.sort } };
+      setTableQueries(tableQueryRef.current);
+    }
+    return paging[id]?.pageSize ?? saved?.pageSize ?? 100;
+  };
+
+  restoreTableStateRef.current = restoreTableState;
 
   const openTable = (table: TableSchema, pin = false) => {
     const id = tableTabId(table);
@@ -975,7 +1345,7 @@ export function App() {
       }));
       return;
     }
-    void loadTable(table, 0, paging[id]?.pageSize ?? 100);
+    void loadTable(table, 0, restoreTableState(table));
   };
 
   const openTableNamed = (schema: string | null, name: string) => {
@@ -1015,11 +1385,12 @@ export function App() {
   const closeTable = async (id: string) => {
     if (!(await confirmDiscardRef.current({ tab: id, action: t("app.discard.closeTab") }))) return;
     setTableTabs((current) => current.filter((tab) => tab.id !== id));
-    setActiveTabId((current) => (current === id ? sqlTabId : current));
+    setActiveTabId((current) => (current === id ? lastSqlTab.current : current));
     forgetTab(id);
   };
 
   const focusTab = (id: string) => {
+    if (isSqlTab(id)) lastSqlTab.current = id;
     setActiveTabId(id);
     const tab = tableTabs.find((item) => item.id === id);
     if (tab) setSelectedTable(tab.table);
@@ -1122,7 +1493,6 @@ export function App() {
   };
   const activeTable = tableTabs.find((tab) => tab.id === activeTabId) ?? null;
   const detailTable = activeTable?.table ?? selectedTable;
-  const sqlView = views[sqlTabId] ?? emptyView();
   const tableView = activeTable ? (views[activeTable.id] ?? emptyView()) : null;
   const writable = activeTable ? canEditRows(activeTable.table, editLocked) : false;
   const structureTable = activeTable?.table.kind === "table"
@@ -1523,7 +1893,7 @@ export function App() {
 
   const exportResult = async (tabId: string, format: ExportFormat) => {
     if (!active) return;
-    const table = tabId === sqlTabId ? null : (tableTabs.find((tab) => tab.id === tabId)?.table ?? null);
+    const table = isSqlTab(tabId) ? null : (tableTabs.find((tab) => tab.id === tabId)?.table ?? null);
     try {
       const path = await save({
         defaultPath: `${table?.name ?? t("app.export.defaultName")}.${format}`,
@@ -1555,8 +1925,8 @@ export function App() {
         }
         return;
       }
-      const columns = views[sqlTabId]?.columns ?? [];
-      const rows = rowsByTab.current[sqlTabId] ?? [];
+      const columns = views[tabId]?.columns ?? [];
+      const rows = rowsByTab.current[tabId] ?? [];
       await writeExport(path, exportRows(format, columns, rows, engine, quoteIdent(t("app.export.defaultName"))));
       setStatus(tabId, plural("app.export.done", rows.length, { path }));
     } catch (caught) {
@@ -1592,17 +1962,23 @@ export function App() {
     });
   };
   closeTabRef.current = () => {
-    if (screen !== "workspace" || activeTabId === sqlTabId) return;
+    if (screen !== "workspace") return;
     if (document.querySelector(".modal-backdrop")) return;
-    closeTable(activeTabId);
+    if (isSqlTab(activeTabId)) closeSqlTab(activeTabId);
+    else void closeTable(activeTabId);
   };
   workspaceState.current = { id: active?.id ?? null, tabs: tableTabs, activeTabId };
 
-  const onSqlChange = (sql: string) => {
+  const onSqlChange = (tab: string, sql: string) => {
+    const savedId = sqlMetaRef.current[tab]?.savedId;
+    if (savedId) {
+      const dirty = savedQueriesRef.current.find((query) => query.id === savedId)?.sql.trim() !== sql.trim();
+      setSqlDirty((current) => (Boolean(current[tab]) === dirty ? current : { ...current, [tab]: dirty }));
+    }
     const id = activeRef.current?.id;
     if (!id) return;
     const state = workspaceState.current;
-    writeSession(id, { sql, activeTab: state.activeTabId, tabs: workspaceTabs(state.tabs) });
+    writeSession(id, { ...sqlSnapshot(id), activeTab: state.activeTabId, tabs: workspaceTabs(state.tabs) });
   };
   undoRef.current = undoChange;
 
@@ -1735,6 +2111,21 @@ export function App() {
         onBrowse={browse}
         onTest={testDraft}
         pendingCommand={homeCommand}
+        team={team}
+        onLinkTeam={() => {
+          void open({ directory: true, multiple: false })
+            .then((folder) => (typeof folder === "string" ? teamLink(folder).then(setTeam) : undefined))
+            .catch((caught: unknown) => setError(errorMessage(caught)));
+        }}
+        onUnlinkTeam={() => {
+          if (window.confirm(t("home.team.confirmUnlink", { folder: team.folder ?? "" }))) void teamLink(null).then(setTeam).catch((caught: unknown) => setError(errorMessage(caught)));
+        }}
+        onShare={(profile) => {
+          void teamShare(profile).then(setTeam).catch((caught: unknown) => setError(errorMessage(caught)));
+        }}
+        onUnshare={(profile) => {
+          if (window.confirm(t("home.team.confirmUnshare", { name: profile.name }))) void teamUnshare(profile.id).then(setTeam).catch((caught: unknown) => setError(errorMessage(caught)));
+        }}
       />
       {updates}
       </>
@@ -1774,6 +2165,7 @@ export function App() {
         { label: plural("app.menu.copyCells", range.cells), hint: "⌘C", run: () => range.copy(false) },
         { label: t("app.menu.copyWithHeaders"), run: () => range.copy(true) },
       ];
+      items.push({ label: t("app.menu.copyRowsAsJson", { rows: rowsLabel }), run: range.copyJson });
       if (tab) items.push({ label: t("app.menu.copyRowsAsInsert", { rows: rowsLabel }), run: () => range.copyInserts(qualifiedName(tab.table), engine) });
       if (writableRange) {
         items.push("separator");
@@ -1801,6 +2193,7 @@ export function App() {
     items.push({ label: t("app.menu.copyValue"), run: () => copyText(isNull ? "" : formatSqlValue(value)) });
     items.push({ label: t("app.menu.copyRow"), run: () => copyText(toTsv(columns, [values], false)) });
     items.push({ label: t("app.menu.copyRowWithHeaders"), run: () => copyText(toTsv(columns, [values], true)) });
+    items.push({ label: t("app.menu.copyRowAsJson"), run: () => copyText(JSON.stringify(JSON.parse(toJson(columns, [values]))[0], null, 2)) });
     if (tab) {
       const target = qualifiedName(tab.table);
       items.push({
@@ -1838,9 +2231,16 @@ export function App() {
           <ArrowLeft size={17} /> {t("app.topbar.connections")}
         </button>
         <div className="workspace-separator" />
-        <div className="connected-badge">
-          <span className="status-dot online" /> {active?.name}
-        </div>
+        {active ? (
+          <ConnectionSwitcher
+            current={active}
+            profiles={catalog.profiles}
+            open={switcherOpen}
+            onOpenChange={setSwitcherOpen}
+            onPick={(profile) => void openConnectionWindow(profile.id).catch((caught: unknown) => setError(errorMessage(caught)))}
+            onNew={() => void openHomeWindow("new-connection").catch((caught: unknown) => setError(errorMessage(caught)))}
+          />
+        ) : null}
         <span className="workspace-host" data-tauri-drag-region>{hostLine}</span>
         {safety.environment !== "local" ? (
           <span className={`env-pill env-${safety.environment}`} title={t("app.topbar.environment")}>{environmentLabel(safety.environment)}</span>
@@ -1876,9 +2276,14 @@ export function App() {
         <aside className="explorer">
           <div className="explorer-heading">
             <span>{t("app.explorer.title")}</span>
-            <button type="button" className="tiny-icon" aria-label={t("app.explorer.refresh")} onClick={() => void refreshSchema()}>
-              <Database size={15} />
-            </button>
+            <span className="explorer-heading-actions">
+              <button type="button" className="tiny-icon" aria-label={t("app.diagram.title")} title={t("app.diagram.openTitle")} onClick={() => setDiagramOpen(true)}>
+                <Network size={15} />
+              </button>
+              <button type="button" className="tiny-icon" aria-label={t("app.explorer.refresh")} onClick={() => void refreshSchema()}>
+                <Database size={15} />
+              </button>
+            </span>
           </div>
           <div className="explorer-search">
             <Search size={14} />
@@ -1956,6 +2361,38 @@ export function App() {
               {engine === "postgres" && schemaNames.length === 0 ? <div className="tree-item depth-1">{t("app.explorer.noSchemas")}</div> : null}
             </TreeBranch>
             )}
+            {savedQueries.length > 0 ? (
+              <TreeBranch
+                label={`${t("app.saved.title")} · ${savedQueries.length}`}
+                depth="depth-0 saved-root"
+                icon={<Bookmark size={14} />}
+                open={branchOpen("saved", true)}
+                onToggle={() => toggleBranch("saved", true)}
+              >
+                {savedQueries
+                  .filter((query) => !needle || query.name.toLowerCase().includes(needle))
+                  .map((query) => (
+                    <div key={query.id} className="tree-item depth-1 saved-item">
+                      <button type="button" className="saved-open" title={query.sql} onClick={() => openSavedQuery(query)}>
+                        <FileCode size={13} /> <span>{query.name}</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="tiny-icon"
+                        aria-label={t("app.saved.remove", { name: query.name })}
+                        title={t("app.saved.remove", { name: query.name })}
+                        onClick={() => {
+                          if (!active || !window.confirm(t("app.saved.confirmRemove", { name: query.name }))) return;
+                          if (sharedConnection) void teamSaveQueries(active.id, savedQueries.filter((item) => item.id !== query.id)).then(setTeam).catch(() => undefined);
+                          else setSavedQueries(removeSaved(active.id, query.id));
+                        }}
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  ))}
+              </TreeBranch>
+            ) : null}
           </div>
         </aside>
         ) : null}
@@ -1973,9 +2410,39 @@ export function App() {
         ) : null}
         <main className="editor-area">
           <div className="editor-tabs" role="tablist">
-            <button type="button" role="tab" className={activeTabId === sqlTabId ? "active" : undefined} onClick={() => focusTab(sqlTabId)}>
-              <TerminalSquare size={15} /> {t("app.tabs.sqlEditor")}
-            </button>
+            {sqlTabs.map((tab) => (
+              <div
+                key={tab}
+                role="tab"
+                className={activeTabId === tab ? "editor-tab sql-tab active" : "editor-tab sql-tab"}
+                title={t("app.sqlTabs.renameHint")}
+                onClick={() => focusTab(tab)}
+                onDoubleClick={() => {
+                  setFormError(null);
+                  setDialog({ kind: "rename-sql-tab", tab });
+                }}
+                onAuxClick={(event) => {
+                  if (event.button === 1) closeSqlTab(tab);
+                }}
+              >
+                {sqlMeta[tab]?.savedId ? <FileCode size={15} /> : <TerminalSquare size={15} />}
+                <span className="tab-label">{sqlTabLabel(tab)}</span>
+                {sqlDirty[tab] ? <span className="tab-dirty" aria-label={t("app.sqlTabs.modified")} title={t("app.sqlTabs.modified")}>•</span> : null}
+                {sqlTabs.length > 1 ? (
+                  <button
+                    type="button"
+                    className="tab-close"
+                    aria-label={t("app.tabs.close", { name: sqlTabLabel(tab) })}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      closeSqlTab(tab);
+                    }}
+                  >
+                    <X size={12} />
+                  </button>
+                ) : null}
+              </div>
+            ))}
             {tableTabs.map((tab) => (
               <div
                 key={tab.id}
@@ -1999,105 +2466,170 @@ export function App() {
                 </button>
               </div>
             ))}
+            <button type="button" className="icon-button new-tab" aria-label={t("app.sqlTabs.new")} title={t("app.sqlTabs.newTitle")} onClick={() => newSqlTab()}>
+              <Plus size={15} />
+            </button>
             <div className="editor-tab-actions">
               <button type="button" className="icon-button" aria-label={t("app.explorer.title")} onClick={() => setExplorerOpen((current) => !current)}>
                 <PanelLeft size={16} />
               </button>
             </div>
           </div>
-          <div ref={sqlStageRef} className={activeTabId === sqlTabId ? "editor-stage" : "editor-stage pane-off"}>
-            <div className="editor-toolbar">
-              <span>SQL</span>
-              <div>
-                <HistoryMenu
-                  entries={history}
-                  onPick={(sql) => editorRef.current?.insertSql(sql)}
-                  onStar={(id) => active && setHistory(toggleStar(active.id, id))}
-                  onRemove={(id) => active && setHistory(removeHistory(active.id, id))}
-                  onClear={() => active && setHistory(clearHistory(active.id))}
-                />
-                <button type="button" className="toolbar-button" title={t("app.editor.formatTitle")} onClick={formatEditor}>
-                  <Braces size={14} /> {t("app.editor.format")} <kbd>{formatShortcut}</kbd>
-                </button>
-                <ExportMenu disabled={running || sqlView.columns.length === 0} onExport={(format) => void exportResult(sqlTabId, format)} />
-                <button
-                  type="button"
-                  className="toolbar-button"
-                  disabled={!running || runningTab.current !== sqlTabId}
-                  onClick={() => {
-                    const queryId = activeQuery.current;
-                    if (queryId) void cancelQuery(queryId);
-                  }}
-                >
-                  {t("app.editor.cancel")}
-                </button>
-                <button type="button" className="toolbar-button" title={t("app.editor.runAllTitle")} disabled={!active || running || busy} onClick={runScript}>
-                  <FastForward size={14} /> {t("app.editor.runAll")} <kbd>{runAllShortcut}</kbd>
-                </button>
-                <button type="button" className="run-button" title={t("app.editor.runTitle")} disabled={!active || running || busy} onClick={() => void runQuery()}>
-                  <Play size={14} /> {t("app.editor.run")} <kbd>{runShortcut}</kbd>
-                </button>
+          {sqlTabs.map((tab) => {
+            const sqlView = views[tab] ?? emptyView();
+            return (
+            <div key={tab} ref={(element) => { sqlStageRefs.current[tab] = element; }} className={activeTabId === tab ? "editor-stage" : "editor-stage pane-off"}>
+              <div className="editor-toolbar">
+                <span>SQL</span>
+                <div>
+                  <HistoryMenu
+                    engine={engine}
+                    entries={history}
+                    onPick={(sql) => editorOf(tab)?.insertSql(sql)}
+                    onStar={(id) => active && setHistory(toggleStar(active.id, id))}
+                    onRemove={(id) => active && setHistory(removeHistory(active.id, id))}
+                    onClear={() => active && setHistory(clearHistory(active.id))}
+                  />
+                  <button
+                    type="button"
+                    className="toolbar-button"
+                    title={t("app.saved.saveTitle")}
+                    disabled={!active}
+                    onClick={() => {
+                      setFormError(null);
+                      setDialog({ kind: "save-query", tab });
+                    }}
+                  >
+                    <Bookmark size={14} /> {t("app.saved.save")}
+                  </button>
+                  <button
+                    type="button"
+                    className="toolbar-button"
+                    title={t("app.link.copyTitle")}
+                    disabled={!active}
+                    onClick={() => {
+                      const sql = editorOf(tab)?.getValue().trim() ?? "";
+                      if (!active || !sql) {
+                        setStatus(tab, t("app.status.noSql"));
+                        return;
+                      }
+                      void navigator.clipboard?.writeText(shareLink(active, sql, sqlMeta[tab]?.title)).then(() => setStatus(tab, t("app.link.copied")));
+                    }}
+                  >
+                    <Link2 size={14} /> {t("app.link.copy")}
+                  </button>
+                  <button type="button" className="toolbar-button" title={t("app.plan.buttonTitle")} disabled={!active || running || busy} onClick={() => void explainQuery(tab)}>
+                    <Route size={14} /> {t("app.plan.button")}
+                  </button>
+                  <button type="button" className="toolbar-button" title={t("app.editor.formatTitle")} onClick={() => formatEditor(tab)}>
+                    <Braces size={14} /> {t("app.editor.format")} <kbd>{formatShortcut}</kbd>
+                  </button>
+                  <ExportMenu disabled={running || sqlView.columns.length === 0} onExport={(format) => void exportResult(tab, format)} />
+                  <button
+                    type="button"
+                    className="toolbar-button"
+                    title={t("app.editor.cancel")}
+                    disabled={!running || runningTab.current !== tab}
+                    onClick={() => {
+                      const queryId = activeQuery.current;
+                      if (queryId) void cancelQuery(queryId);
+                    }}
+                  >
+                    <CircleStop size={14} /> {t("app.editor.cancel")}
+                  </button>
+                  <button type="button" className="toolbar-button" title={t("app.editor.runAllTitle")} disabled={!active || running || busy} onClick={() => runScript(tab)}>
+                    <FastForward size={14} /> {t("app.editor.runAll")} <kbd>{runAllShortcut}</kbd>
+                  </button>
+                  <button type="button" className="run-button" title={t("app.editor.runTitle")} disabled={!active || running || busy} onClick={() => void runQuery(tab)}>
+                    <Play size={14} /> {t("app.editor.run")} <kbd>{runShortcut}</kbd>
+                  </button>
+                </div>
+              </div>
+              <SqlEditor
+                key={`${active?.id ?? ""}:${tab}`}
+                ref={(handle) => { editorRefs.current[tab] = handle; }}
+                engine={engine}
+                schema={schema}
+                initialSql={sqlSeeds.current[tab] ?? ""}
+                visible={activeTabId === tab}
+                onChange={(sql) => onSqlChange(tab, sql)}
+                onRun={() => void runQuery(tab)}
+                onRunAll={() => runScript(tab)}
+                onFormat={() => formatEditor(tab)}
+                checker={checker}
+              />
+              {sqlView.ran ? (
+                <>
+                  <PaneSplitter
+                    axis="y"
+                    label={t("app.editor.resizeResults")}
+                    onDrag={(delta) =>
+                      setResultsHeight((current) => {
+                        const next = clampResults(current - delta, sqlStageRefs.current[tab] ?? null);
+                        window.localStorage.setItem("gridl.results", String(next));
+                        return next;
+                      })
+                    }
+                  />
+                  <div className="query-results" style={{ height: resultsHeight }}>
+                    {sqlView.results && !sqlView.pending ? (
+                      <div className="result-tabs" role="tablist" aria-label={t("app.results.label")}>
+                        {sqlView.results.map((result, index) => (
+                          <button
+                            key={index}
+                            type="button"
+                            role="tab"
+                            aria-selected={sqlView.shown === index}
+                            className={`${sqlView.shown === index ? "active" : ""}${result.error ? " failed" : ""}`}
+                            title={result.sql}
+                            onClick={() => showResult(tab, index)}
+                          >
+                            {scriptResultLabel(result, index)}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                    {sqlView.error ? (
+                      <ErrorPanel error={sqlView.error} action={reconnectAction(sqlView.error)} />
+                    ) : sqlView.plan ? (
+                      <PlanView nodes={sqlView.plan} />
+                    ) : sqlView.columns.length > 0 ? (
+                      <ResultGrid
+                        key={sqlView.shown ?? -1}
+                        columns={sqlView.columns}
+                        rowCount={sqlView.rowCount}
+                        rowsRef={rowsHandle(tab)}
+                        onFocusRow={(row) => setFocusedRow(row === null ? null : { tab, row })}
+                        onCellMenu={(row, column, point, range) => setCellMenu({ tab, row, column, ...point, range })}
+                      />
+                    ) : (
+                      <ResultMessage
+                        loading={Boolean(sqlView.pending)}
+                        text={sqlView.pending ? t("app.status.running") : (pickedWrite(sqlView) ?? sqlView.status)}
+                      />
+                    )}
+                  </div>
+                </>
+              ) : null}
+              <div className={sqlView.error ? "editor-status failed" : "editor-status"}>
+                <span>{sqlView.status || t("app.empty.start")}</span>
+                {sqlView.more && !running ? (
+                  <button
+                    type="button"
+                    className="status-action"
+                    title={t("app.editor.loadMoreTitle")}
+                    onClick={() => {
+                      const more = sqlView.more;
+                      if (more) void runQuery(tab, more.sql, more.limit);
+                    }}
+                  >
+                    {t("app.editor.loadMore", { count: formatNumber(sqlView.more.limit) })}
+                  </button>
+                ) : null}
               </div>
             </div>
-            <SqlEditor
-              ref={editorRef}
-              engine={engine}
-              schema={schema}
-              initialSql={sqlSeed}
-              visible={activeTabId === sqlTabId}
-              onChange={onSqlChange}
-              onRun={() => void runQuery()}
-              onRunAll={runScript}
-              onFormat={formatEditor}
-              checker={checker}
-            />
-            {sqlView.ran ? (
-              <>
-                <PaneSplitter
-                  axis="y"
-                  label={t("app.editor.resizeResults")}
-                  onDrag={(delta) =>
-                    setResultsHeight((current) => {
-                      const next = clampResults(current - delta, sqlStageRef.current);
-                      window.localStorage.setItem("gridl.results", String(next));
-                      return next;
-                    })
-                  }
-                />
-                <div className="query-results" style={{ height: resultsHeight }}>
-                  {sqlView.error ? (
-                    <ErrorPanel error={sqlView.error} action={reconnectAction(sqlView.error)} />
-                  ) : sqlView.columns.length > 0 ? (
-                    <ResultGrid
-                      columns={sqlView.columns}
-                      rowCount={sqlView.rowCount}
-                      rowsRef={rowsHandle(sqlTabId)}
-                      onFocusRow={(row) => setFocusedRow(row === null ? null : { tab: sqlTabId, row })}
-                      onCellMenu={(row, column, point, range) => setCellMenu({ tab: sqlTabId, row, column, ...point, range })}
-                    />
-                  ) : (
-                    <ResultMessage text={sqlView.pending ? t("app.status.running") : sqlView.status} />
-                  )}
-                </div>
-              </>
-            ) : null}
-            <div className={sqlView.error ? "editor-status failed" : "editor-status"}>
-              <span>{sqlView.status || t("app.empty.start")}</span>
-              {sqlView.more && !running ? (
-                <button
-                  type="button"
-                  className="status-action"
-                  title={t("app.editor.loadMoreTitle")}
-                  onClick={() => {
-                    const more = sqlView.more;
-                    if (more) void runQuery(sqlTabId, more.sql, more.limit);
-                  }}
-                >
-                  {t("app.editor.loadMore", { count: formatNumber(sqlView.more.limit) })}
-                </button>
-              ) : null}
-            </div>
-          </div>
+            );
+          })}
           {activeTable && tableView ? (
             <div className="results-stage">
               <div className="editor-toolbar">
@@ -2129,6 +2661,11 @@ export function App() {
                         }
                       }}
                     />
+                    {activeTable.table.kind === "table" ? (
+                      <button type="button" className="toolbar-button" title={t("app.compare.buttonTitle")} onClick={() => setCompareOpen(true)}>
+                        <GitCompareArrows size={14} /> {t("app.compare.button")}
+                      </button>
+                    ) : null}
                     <ExportMenu disabled={running || tableView.columns.length === 0} onExport={(format) => void exportResult(activeTable.id, format)} />
                     {writable ? (
                       <button type="button" className="toolbar-button" disabled={running} title={t("app.table.importTitle")} onClick={() => void startImport(activeTable.id, activeTable.table)}>
@@ -2149,8 +2686,8 @@ export function App() {
                         <button type="button" className="run-button" disabled={running} onClick={() => void saveEdits()}>
                           {t("app.table.save")} <kbd>{saveShortcut}</kbd>
                         </button>
-                        <button type="button" className="toolbar-button" disabled={running} onClick={discardEdits}>
-                          {t("app.table.cancel")}
+                        <button type="button" className="toolbar-button" title={t("app.table.cancel")} disabled={running} onClick={discardEdits}>
+                          <Undo2 size={14} /> {t("app.table.cancel")}
                         </button>
                       </>
                     ) : null}
@@ -2210,6 +2747,7 @@ export function App() {
               {tablePane === "structure" && structureTable && !structureLocked ? null : showsRows(activeTable.table) ? (
                 tableView.columns.length > 0 ? (
                   <ResultGrid
+                    layoutKey={active ? `${active.id}:${activeTable.id}` : undefined}
                     columns={tableView.columns}
                     rowCount={tableView.rowCount}
                     rowsRef={rowsHandle(activeTable.id)}
@@ -2231,7 +2769,13 @@ export function App() {
                     onCellMenu={(row, column, point, range) => setCellMenu({ tab: activeTable.id, row, column, ...point, range })}
                   />
                 ) : (
-                  tableView.error ? <ErrorPanel error={tableView.error} action={reconnectAction(tableView.error)} /> : <div className="results-empty">{tableView.status || t("app.status.loading")}</div>
+                  tableView.error ? (
+                    <ErrorPanel error={tableView.error} action={reconnectAction(tableView.error)} />
+                  ) : (
+                    <div className="results-empty">
+                      {running && runningTab.current === activeTable.id ? <LogoLoader label={tableView.status || t("app.status.loading")} /> : tableView.status || t("app.status.loading")}
+                    </div>
+                  )
                 )
               ) : (
                 <>
@@ -2239,8 +2783,8 @@ export function App() {
                     <RoutineSummary
                       routine={activeTable.table}
                       onUse={() => {
-                        setActiveTabId(sqlTabId);
-                        editorRef.current?.insertSql(routineCallSql(activeTable.table, engine));
+                        setActiveTabId(lastSqlTab.current);
+                        editorOf()?.insertSql(routineCallSql(activeTable.table, engine));
                       }}
                     />
                   ) : null}
@@ -2261,8 +2805,20 @@ export function App() {
                   <TablePager
                     page={paging[activeTable.id]}
                     running={running}
-                    onPage={(page) => void loadTable(activeTable.table, page, paging[activeTable.id]?.pageSize ?? 100)}
-                    onPageSize={(pageSize) => void loadTable(activeTable.table, 0, pageSize)}
+                    onPage={(page) => void loadTable(activeTable.table, page, paging[activeTable.id]?.pageSize ?? 100, false, false, false, true)}
+                    onPageSize={(pageSize) => void loadTable(activeTable.table, 0, pageSize, false, false, false, true)}
+                    onCount={() => {
+                      const shown = paging[activeTable.id];
+                      if (!shown) return;
+                      const query = tableQueryRef.current[activeTable.id];
+                      const token = (loadToken.current[activeTable.id] ?? 0) + 1;
+                      loadToken.current[activeTable.id] = token;
+                      const counting: TablePage = { ...shown, total: null, approximate: false };
+                      const where = whereClause(query?.filters ?? [], engine);
+                      setPaging((current) => ({ ...current, [activeTable.id]: counting }));
+                      setViews((current) => (current[activeTable.id] ? { ...current, [activeTable.id]: { ...current[activeTable.id], status: pageStatus(counting, Boolean(where), 0) } } : current));
+                      void countRows(activeTable.table, counting, where, 0, token, true);
+                    }}
                     onCancel={() => {
                       const queryId = activeQuery.current;
                       if (queryId) void cancelQuery(queryId);
@@ -2307,11 +2863,12 @@ export function App() {
               index={focusedRow.row}
               relation={(column) => {
                 const source = activeTable?.table;
-                if (!source || focusedRow.tab === sqlTabId) return null;
+                if (!source || isSqlTab(focusedRow.tab)) return null;
                 const key = keyForColumn(foreignKeys, source, column);
                 if (!key || !findTable(tables, key.refSchema, key.refTable)) return null;
                 return { label: key.refTable, open: () => openReferenced(key, focusView.columns, focusedValues) };
               }}
+              onEdit={activeTable && focusedRow.tab === activeTable.id && writable ? (column, value) => editCell(focusedRow.row, column, value) : undefined}
             />
           ) : (
             <div className="details-empty">
@@ -2324,6 +2881,88 @@ export function App() {
           )}
         </aside>
       </div>
+      {paramPrompt && active ? (
+        <ParamsDialog
+          connectionId={active.id}
+          names={paramPrompt.names}
+          onClose={() => setParamPrompt(null)}
+          onRun={(values) => {
+            const prompt = paramPrompt;
+            setParamPrompt(null);
+            void runQuery(prompt.tabId, prompt.statements, prompt.maxRows, values);
+          }}
+        />
+      ) : null}
+      {compareOpen && activeTable && activeTable.table.kind === "table" ? (
+        <CompareView
+          engine={engine}
+          table={activeTable.table}
+          tables={tables}
+          query={async (sql) => (await collectQuery(sql))?.rows ?? []}
+          onClose={() => setCompareOpen(false)}
+        />
+      ) : null}
+      {diagramOpen ? (
+        <ErDiagram
+          title={engine === "postgres" && !allSchemas ? activeSchema : (active?.database ?? "")}
+          tables={engine === "postgres" && !allSchemas ? tables.filter((table) => table.schema === activeSchema) : tables}
+          keys={foreignKeys}
+          onOpen={(table) => {
+            setDiagramOpen(false);
+            openTable(table, true);
+          }}
+          onClose={() => setDiagramOpen(false)}
+        />
+      ) : null}
+      {quickOpen ? <QuickOpen objects={tables} onOpen={(object) => openTable(object, true)} onClose={() => setQuickOpen(false)} /> : null}
+      {dialog?.kind === "save-query" ? (
+        <NameDialog
+          title={t("app.saved.dialogTitle")}
+          description={t("app.saved.dialogBody")}
+          initial={sqlMeta[dialog.tab]?.title || suggestedName(editorOf(dialog.tab)?.getValue() ?? "")}
+          confirmLabel={t("app.saved.save")}
+          busy={false}
+          error={formError}
+          onClose={() => setDialog(null)}
+          onSubmit={(name) => {
+            const sql = editorOf(dialog.tab)?.getValue().trim() ?? "";
+            if (!active || !name.trim()) return;
+            if (!sql) {
+              setFormError(t("app.saved.empty"));
+              return;
+            }
+            const next = sharedConnection ? withSaved(savedQueries, name.trim(), sql) : saveQuery(active.id, name.trim(), sql);
+            if (sharedConnection) void teamSaveQueries(active.id, next).then(setTeam).catch((caught: unknown) => setFormError(errorMessage(caught)));
+            else setSavedQueries(next);
+            const saved = next.find((query) => query.name === name.trim());
+            if (saved) {
+              // Other tabs that held a query of the same name now hold nothing saved.
+              setSqlMeta((current) => {
+                const updated = Object.fromEntries(Object.entries(current).map(([id, meta]) => [id, meta.savedId && !next.some((query) => query.id === meta.savedId) ? { title: meta.title } : meta]));
+                return { ...updated, [dialog.tab]: { title: saved.name, savedId: saved.id } };
+              });
+              setSqlDirty((current) => ({ ...current, [dialog.tab]: false }));
+            }
+            setDialog(null);
+          }}
+        />
+      ) : null}
+      {dialog?.kind === "rename-sql-tab" ? (
+        <NameDialog
+          title={t("app.sqlTabs.renameTitle")}
+          description={t("app.sqlTabs.renameBody")}
+          initial={sqlMeta[dialog.tab]?.title ?? ""}
+          confirmLabel={t("app.sqlTabs.rename")}
+          busy={false}
+          error={null}
+          onClose={() => setDialog(null)}
+          onSubmit={(name) => {
+            const title = name.trim() || undefined;
+            setSqlMeta((current) => ({ ...current, [dialog.tab]: { ...current[dialog.tab], title } }));
+            setDialog(null);
+          }}
+        />
+      ) : null}
       {dialog?.kind === "create-schema" ? (
         <NameDialog title={t("app.schema.newTitle")} description={t("app.schema.newDescription")} initial="" confirmLabel={t("app.schema.create")} busy={running} error={formError} onClose={() => setDialog(null)} onSubmit={(name) => void submitName(name)} />
       ) : null}

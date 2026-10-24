@@ -1,5 +1,5 @@
 import { type TableSchema } from "../lib/api";
-import { sqlTabId, tableTabId, type TableTab } from "./model";
+import { isSqlTab, sqlTabId, tableTabId, type TableTab } from "./model";
 
 export type SavedTab = {
   schema: string | null;
@@ -8,8 +8,20 @@ export type SavedTab = {
   pinned: boolean;
 };
 
-export type SavedSession = {
+export type SavedSqlTab = {
+  id: string;
   sql: string;
+  /** A name the user gave the tab, or the saved query it was opened from. */
+  title?: string;
+  /** The saved query the tab holds, so opening it again comes back to this tab. */
+  savedId?: string;
+};
+
+export type SavedSession = {
+  /** Text of the first SQL tab; kept for sessions saved before there were several. */
+  sql: string;
+  /** Every SQL tab in order, with its text. */
+  sqlTabs?: SavedSqlTab[];
   activeTab: string;
   tabs: SavedTab[];
 };
@@ -44,8 +56,14 @@ export function readSession(id: string): SavedSession | null {
         pinned: item.pinned !== false,
       }];
     });
+    const sqlTabs = Array.isArray(parsed.sqlTabs)
+      ? parsed.sqlTabs.flatMap((tab) => (tab && typeof tab.id === "string" && isSqlTab(tab.id) && typeof tab.sql === "string"
+        ? [{ id: tab.id, sql: tab.sql, title: typeof tab.title === "string" ? tab.title : undefined, savedId: typeof tab.savedId === "string" ? tab.savedId : undefined }]
+        : []))
+      : [];
     return {
       sql: parsed.sql,
+      sqlTabs: sqlTabs.length > 0 ? sqlTabs : [{ id: sqlTabId, sql: parsed.sql }],
       activeTab: typeof parsed.activeTab === "string" ? parsed.activeTab : sqlTabId,
       tabs,
     };
@@ -56,8 +74,9 @@ export function readSession(id: string): SavedSession | null {
 
 export function writeSession(id: string, session: SavedSession) {
   try {
-    const sql = session.sql.length > 500_000 ? session.sql.slice(0, 500_000) : session.sql;
-    window.localStorage.setItem(sessionKey(id), JSON.stringify({ ...session, sql }));
+    const cap = (sql: string) => (sql.length > 500_000 ? sql.slice(0, 500_000) : sql);
+    const sqlTabs = session.sqlTabs?.map((tab) => ({ ...tab, sql: cap(tab.sql) }));
+    window.localStorage.setItem(sessionKey(id), JSON.stringify({ ...session, sql: cap(session.sql), sqlTabs }));
   } catch {
     // The browser can reject the write when storage is full.
   }

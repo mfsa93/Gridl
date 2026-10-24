@@ -1,6 +1,6 @@
-import { ArrowUpRight, Check, CircleAlert, Copy, Search, ShieldAlert, SquareTerminal, ShieldX, TriangleAlert, Download, Filter, History, Plus, Star, Trash2, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
-import { formatSqlValue, type BatchStatement, type ColumnDefinition, type SqlValue, type TableSchema } from "../lib/api";
+import { ArrowUpRight, Check, CircleAlert, Copy, Pencil, Search, ShieldAlert, SquareTerminal, ShieldX, TriangleAlert, Download, Filter, History, Plus, Star, Trash2, X } from "lucide-react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { formatSqlValue, type BatchStatement, type ColumnDefinition, type DatabaseEngine, type SqlValue, type TableSchema } from "../lib/api";
 import { exportFormats, type ExportFormat } from "./export";
 import { blankFilter, filterOps, opTakesValue, type FilterOp, type TableFilter } from "./filters";
 import type { ShownError } from "../lib/errors";
@@ -8,6 +8,9 @@ import type { GuardInfo } from "../lib/api";
 import { environmentLabel } from "../lib/environments";
 import type { HistoryEntry } from "./history";
 import { formatDate, plural, t } from "../lib/i18n";
+import { highlightSql } from "../editor/highlight";
+import { LogoLoader } from "./LogoLoader";
+import { isGeneratedColumn } from "./changes";
 import { useDismiss } from "./useDismiss";
 
 export function FilterBar({
@@ -153,13 +156,21 @@ function relativeTime(at: number): string {
   return formatDate(at);
 }
 
+/** One flowing line of SQL for the history list; the full text is in the tooltip. */
+function preview(sql: string): string {
+  const flat = sql.replace(/\s+/g, " ").trim();
+  return flat.length > 300 ? `${flat.slice(0, 300)}…` : flat;
+}
+
 export function HistoryMenu({
+  engine,
   entries,
   onPick,
   onStar,
   onRemove,
   onClear,
 }: {
+  engine: DatabaseEngine;
   entries: HistoryEntry[];
   onPick: (sql: string) => void;
   onStar: (id: string) => void;
@@ -169,18 +180,34 @@ export function HistoryMenu({
   const [open, setOpen] = useState(false);
   const [needle, setNeedle] = useState("");
   const [onlyStarred, setOnlyStarred] = useState(false);
+  // Placed against the window, not the editor pane: the pane clips what
+  // overflows it, and a wide menu opening left would hide under the explorer.
+  const [place, setPlace] = useState<CSSProperties>({});
   const ref = useDismiss(open, () => setOpen(false));
+  const toggle = () => {
+    const anchor = ref.current?.getBoundingClientRect();
+    if (!open && anchor) {
+      setPlace({ position: "fixed", top: anchor.bottom + 6, right: window.innerWidth - anchor.right, width: Math.min(520, anchor.right - 12) });
+    }
+    setOpen((current) => !current);
+  };
+  useEffect(() => {
+    if (!open) return undefined;
+    const close = () => setOpen(false);
+    window.addEventListener("resize", close);
+    return () => window.removeEventListener("resize", close);
+  }, [open]);
   const shown = useMemo(() => {
     const query = needle.trim().toLowerCase();
     return entries.filter((entry) => (!onlyStarred || entry.starred) && (!query || entry.sql.toLowerCase().includes(query)));
   }, [entries, needle, onlyStarred]);
   return (
     <div className="popover-anchor" ref={ref}>
-      <button type="button" className="toolbar-button" onClick={() => setOpen((current) => !current)}>
+      <button type="button" className="toolbar-button" title={t("panel.history.title")} onClick={toggle}>
         <History size={14} /> {t("panel.history.title")}
       </button>
       {open ? (
-        <div className="popover-menu history-menu">
+        <div className="popover-menu history-menu" style={place}>
           <div className="history-tools">
             <input value={needle} autoFocus placeholder={t("panel.history.search")} onChange={(event) => setNeedle(event.target.value)} />
             <button type="button" className={onlyStarred ? "tiny-icon active" : "tiny-icon"} aria-label={t("panel.history.onlyStarred")} title={t("panel.history.onlyStarred")} onClick={() => setOnlyStarred((current) => !current)}>
@@ -203,7 +230,7 @@ export function HistoryMenu({
                     onPick(entry.sql);
                   }}
                 >
-                  <code>{entry.sql.length > 220 ? `${entry.sql.slice(0, 220)}…` : entry.sql}</code>
+                  <code className="sql-tokens">{highlightSql(preview(entry.sql), engine)}</code>
                   <span>
                     {relativeTime(entry.at)}
                     {entry.durationMs !== null ? ` · ${entry.durationMs} ms` : ""}
@@ -289,14 +316,41 @@ export function RowDetails({
   row,
   index,
   relation,
+  onEdit,
 }: {
   columns: ColumnDefinition[];
   row: SqlValue[];
   index: number;
   /** A link to the referenced row when the column is a foreign key. */
   relation?: (column: string) => { label: string; open: () => void } | null;
+  /** Set when the row can be edited: stages a new value for a column as a pending edit. */
+  onEdit?: (column: number, value: SqlValue) => void;
 }) {
   const [query, setQuery] = useState("");
+  // One field at a time opens in a roomy editor, with JSON already indented.
+  const [editing, setEditing] = useState<{ position: number; text: string } | null>(null);
+  const [editingRow, setEditingRow] = useState(index);
+  if (editingRow !== index) {
+    setEditingRow(index);
+    setEditing(null);
+  }
+  const [editError, setEditError] = useState<string | null>(null);
+  const commit = (value: SqlValue) => {
+    if (!editing || !onEdit) return;
+    const column = columns[editing.position];
+    if (value.t === "text" && column && /json/i.test(column.dataType)) {
+      // JSON columns get checked here and stored compact, so the grid shows them on one line.
+      try {
+        value = { t: "text", v: JSON.stringify(JSON.parse(value.v)) };
+      } catch (caught) {
+        setEditError(t("panel.row.invalidJson", { error: caught instanceof Error ? caught.message : String(caught) }));
+        return;
+      }
+    }
+    onEdit(editing.position, value);
+    setEditing(null);
+    setEditError(null);
+  };
   const needle = query.trim().toLowerCase();
   const fields = columns.map((column, position) => ({ column, position })).filter(({ column }) => !needle || column.name.toLowerCase().includes(needle));
   return (
@@ -323,11 +377,68 @@ export function RowDetails({
                     {column.name}
                     {column.dataType ? <small>{column.dataType}</small> : null}
                   </span>
-                  <button type="button" className="tiny-icon" aria-label={t("panel.row.copy", { column: column.name })} onClick={() => void navigator.clipboard?.writeText(shown.isNull ? "" : shown.text)}>
-                    <Copy size={12} />
-                  </button>
+                  <span className="row-field-tools">
+                    {onEdit && !isGeneratedColumn(column) ? (
+                      <button
+                        type="button"
+                        className="tiny-icon"
+                        aria-label={t("panel.row.edit", { column: column.name })}
+                        title={t("panel.row.edit", { column: column.name })}
+                        onClick={() => {
+                          setEditError(null);
+                          setEditing({ position, text: shown.isNull ? "" : shown.text });
+                        }}
+                      >
+                        <Pencil size={12} />
+                      </button>
+                    ) : null}
+                    <button type="button" className="tiny-icon" aria-label={t("panel.row.copy", { column: column.name })} onClick={() => void navigator.clipboard?.writeText(shown.isNull ? "" : shown.text)}>
+                      <Copy size={12} />
+                    </button>
+                  </span>
                 </dt>
-                <dd className={shown.isNull ? "null" : shown.json ? "json" : undefined}>{shown.text}</dd>
+                {editing?.position === position ? (
+                  <div className="row-edit">
+                    <textarea
+                      autoFocus
+                      spellCheck={false}
+                      value={editing.text}
+                      rows={Math.min(16, Math.max(4, editing.text.split("\n").length + 1))}
+                      onChange={(event) => setEditing({ position, text: event.target.value })}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                          event.preventDefault();
+                          commit({ t: "text", v: editing.text });
+                        } else if (event.key === "Escape") {
+                          event.stopPropagation();
+                          setEditing(null);
+                        }
+                      }}
+                    />
+                    {editError ? <span className="row-edit-error">{editError}</span> : null}
+                    <div className="row-edit-actions">
+                      {column.nullable ? (
+                        <button type="button" className="secondary-button" onClick={() => commit({ t: "null" })}>NULL</button>
+                      ) : null}
+                      <span />
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        onClick={() => {
+                          setEditing(null);
+                          setEditError(null);
+                        }}
+                      >
+                        {t("panel.row.cancel")}
+                      </button>
+                      <button type="button" className="primary-button" title="⌘↵" onClick={() => commit({ t: "text", v: editing.text })}>
+                        {t("panel.row.apply")}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <dd className={shown.isNull ? "null" : shown.json ? "json" : undefined}>{shown.text}</dd>
+                )}
                 {link ? (
                   <button type="button" className="relation-link row-jump" onClick={link.open}>
                     {t("panel.row.openIn", { table: link.label })} <ArrowUpRight size={12} />
@@ -444,8 +555,8 @@ export function ErrorPanel({
   );
 }
 
-export function ResultMessage({ text }: { text: string }) {
-  return <div className="result-message">{text}</div>;
+export function ResultMessage({ text, loading = false }: { text: string; loading?: boolean }) {
+  return <div className="result-message">{loading ? <LogoLoader label={text} /> : text}</div>;
 }
 
 export type MenuItem =

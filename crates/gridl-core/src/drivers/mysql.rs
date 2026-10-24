@@ -47,6 +47,8 @@ struct EditorConnection {
 struct Session {
     pool: MySqlPool,
     editor: tokio::sync::Mutex<Option<EditorConnection>>,
+    /// Kept apart from the editor so browsing tables never waits behind it.
+    browser: tokio::sync::Mutex<Option<EditorConnection>>,
     /// `DATABASE()` of the session. The catalog shows only this schema.
     database: String,
     mariadb: bool,
@@ -95,6 +97,7 @@ impl DatabaseDriver for MysqlDriver {
         let session = Arc::new(Session {
             pool,
             editor: tokio::sync::Mutex::new(None),
+            browser: tokio::sync::Mutex::new(None),
             database,
             mariadb: is_mariadb(&version),
         });
@@ -199,9 +202,8 @@ impl DatabaseDriver for MysqlDriver {
         let session = self.session(id)?;
         let pool = &session.pool;
         let schema = session.database.as_str();
-        let keys = primary_keys(pool, schema, None).await?;
-        let views = view_definitions(pool, schema).await?;
-        let rows = sqlx::query(
+        // Independent catalog reads, run side by side on the pool.
+        let columns = sqlx::query(
             "SELECT c.TABLE_NAME AS table_name, t.TABLE_TYPE AS table_type,
                     c.COLUMN_NAME AS column_name, c.COLUMN_TYPE AS column_type,
                     c.IS_NULLABLE AS is_nullable, c.COLUMN_DEFAULT AS column_default,
@@ -214,9 +216,15 @@ impl DatabaseDriver for MysqlDriver {
              ORDER BY c.TABLE_NAME, c.ORDINAL_POSITION",
         )
         .bind(schema)
-        .fetch_all(pool)
-        .await
-        .map_err(db_err)?;
+        .fetch_all(pool);
+        let (keys, views, rows, routines, triggers, indexes) = tokio::try_join!(
+            primary_keys(pool, schema, None),
+            view_definitions(pool, schema),
+            async { columns.await.map_err(db_err) },
+            routines(pool, schema),
+            triggers(pool, schema),
+            indexes(pool, schema, session.mariadb),
+        )?;
 
         let mut tables: Vec<TableSchema> = Vec::new();
         for row in &rows {
@@ -239,9 +247,9 @@ impl DatabaseDriver for MysqlDriver {
                 }
             }
         }
-        tables.extend(routines(pool, schema).await?);
-        tables.extend(triggers(pool, schema).await?);
-        tables.extend(indexes(pool, schema, session.mariadb).await?);
+        tables.extend(routines);
+        tables.extend(triggers);
+        tables.extend(indexes);
         Ok(tables)
     }
 
@@ -257,7 +265,8 @@ impl DatabaseDriver for MysqlDriver {
             return Ok(finished(request, Vec::new(), 0, 0, started, true, false));
         }
         let session = self.session(id)?;
-        let mut editor = session.editor.lock().await;
+        let slot = if request.browse { &session.browser } else { &session.editor };
+        let mut editor = slot.lock().await;
         if editor.is_none() {
             let mut connection = session.pool.acquire().await.map_err(db_err)?;
             let thread_id: u64 = sqlx::query_scalar("SELECT CONNECTION_ID()")
@@ -442,8 +451,10 @@ fn is_mariadb(version: &str) -> bool {
 }
 
 async fn close_session(session: &Session) {
-    if let Ok(mut editor) = session.editor.try_lock() {
-        editor.take();
+    for slot in [&session.editor, &session.browser] {
+        if let Ok(mut connection) = slot.try_lock() {
+            connection.take();
+        }
     }
     let _ = tokio::time::timeout(Duration::from_secs(3), session.pool.close()).await;
 }

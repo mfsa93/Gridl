@@ -4,6 +4,7 @@ mod commands;
 mod integration_tests;
 mod menu;
 mod state;
+mod team;
 mod transfer;
 mod tunnel;
 mod vault;
@@ -14,6 +15,7 @@ use tauri::Manager;
 /// Starts the desktop shell. The database engine lives in `gridl-core`.
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -21,7 +23,14 @@ pub fn run() {
             let command = event.id().0.clone();
             if matches!(
                 command.as_str(),
-                "new-connection" | "new-group" | "close-tab" | "reload" | "check-updates"
+                "new-connection"
+                    | "new-sql-tab"
+                    | "quick-open"
+                    | "open-connection"
+                    | "new-group"
+                    | "close-tab"
+                    | "reload"
+                    | "check-updates"
             ) {
                 // Only the window the user is looking at acts on the menu.
                 if let Some(label) = windows::focused_label(app) {
@@ -32,6 +41,14 @@ pub fn run() {
         .setup(|app| {
             app.manage(state::AppState::new());
             menu::install(app.handle())?;
+            // gridl:// links, whether they start the app or reach it while it runs.
+            use tauri_plugin_deep_link::DeepLinkExt;
+            let handle = app.handle().clone();
+            app.deep_link().on_open_url(move |event| {
+                for url in event.urls() {
+                    windows::open_link(&handle, &url);
+                }
+            });
             Ok(())
         })
         .on_window_event(windows::on_window_event)
@@ -56,6 +73,11 @@ pub fn run() {
             commands::close_discarding,
             windows::open_connection_window,
             windows::open_home_window,
+            team::team_state,
+            team::team_link,
+            team::team_share,
+            team::team_unshare,
+            team::team_save_queries,
             transfer::export_query,
             transfer::preview_csv,
             transfer::import_csv,

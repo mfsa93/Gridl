@@ -40,6 +40,8 @@ struct EditorConnection {
 struct Session {
     pool: PgPool,
     editor: tokio::sync::Mutex<Option<EditorConnection>>,
+    /// Kept apart from the editor so browsing tables never waits behind it.
+    browser: tokio::sync::Mutex<Option<EditorConnection>>,
     enums: RwLock<Arc<EnumLabels>>,
 }
 
@@ -107,6 +109,7 @@ impl DatabaseDriver for PostgresDriver {
         let session = Arc::new(Session {
             pool,
             editor: tokio::sync::Mutex::new(None),
+            browser: tokio::sync::Mutex::new(None),
             enums: RwLock::new(Arc::new(enums)),
         });
         let replaced = {
@@ -175,16 +178,9 @@ impl DatabaseDriver for PostgresDriver {
         let pool = self.pool(id)?;
         let keys = primary_keys(&pool, Some((schema, relation.name.as_str()))).await?;
         let enums = enum_labels(&pool).await?;
-        let rows = sqlx::query(
-            "SELECT c.column_name, c.data_type, c.udt_schema, c.udt_name, c.is_nullable, c.column_default,
-                    pg_catalog.format_type(pa.atttypid, pa.atttypmod) AS full_type
-             FROM information_schema.columns c
-             LEFT JOIN pg_catalog.pg_namespace pn ON pn.nspname = c.table_schema
-             LEFT JOIN pg_catalog.pg_class pc ON pc.relnamespace = pn.oid AND pc.relname = c.table_name
-             LEFT JOIN pg_catalog.pg_attribute pa ON pa.attrelid = pc.oid AND pa.attname = c.column_name
-             WHERE c.table_schema = $1 AND c.table_name = $2
-             ORDER BY c.ordinal_position",
-        )
+        let rows = sqlx::query(&format!(
+            "{COLUMNS} AND n.nspname = $1 AND c.relname = $2 ORDER BY a.attnum"
+        ))
         .bind(schema)
         .bind(&relation.name)
         .fetch_all(&pool)
@@ -207,26 +203,19 @@ impl DatabaseDriver for PostgresDriver {
     async fn introspect(&self, id: &ConnectionId) -> Result<Vec<TableSchema>, CoreError> {
         let session = self.session(id)?;
         let pool = session.pool.clone();
-        let keys = primary_keys(&pool, None).await?;
-        let enums = enum_labels(&pool).await?;
+        // Independent catalog reads, run side by side on the pool.
+        let (keys, enums, rows, objects) = tokio::try_join!(
+            primary_keys(&pool, None),
+            enum_labels(&pool),
+            async {
+                sqlx::query(&format!("{COLUMNS} ORDER BY n.nspname, c.relname, a.attnum"))
+                    .fetch_all(&pool)
+                    .await
+                    .map_err(db_err)
+            },
+            catalog_objects(&pool),
+        )?;
         session.set_enums(enums.clone())?;
-        let rows = sqlx::query(
-            "SELECT c.table_schema, c.table_name, t.table_type,
-                    c.column_name, c.data_type, c.udt_schema, c.udt_name, c.is_nullable, c.column_default,
-                    pg_catalog.format_type(pa.atttypid, pa.atttypmod) AS full_type
-             FROM information_schema.columns c
-             JOIN information_schema.tables t
-               ON t.table_schema = c.table_schema
-              AND t.table_name = c.table_name
-             LEFT JOIN pg_catalog.pg_namespace pn ON pn.nspname = c.table_schema
-             LEFT JOIN pg_catalog.pg_class pc ON pc.relnamespace = pn.oid AND pc.relname = c.table_name
-             LEFT JOIN pg_catalog.pg_attribute pa ON pa.attrelid = pc.oid AND pa.attname = c.column_name
-             WHERE c.table_schema NOT IN ('pg_catalog', 'information_schema')
-             ORDER BY c.table_schema, c.table_name, c.ordinal_position",
-        )
-        .fetch_all(&pool)
-        .await
-        .map_err(db_err)?;
 
         let mut tables: Vec<TableSchema> = Vec::new();
         for row in &rows {
@@ -252,7 +241,7 @@ impl DatabaseDriver for PostgresDriver {
                 });
             }
         }
-        tables.extend(catalog_objects(&pool).await?);
+        tables.extend(objects);
         Ok(tables)
     }
 
@@ -269,7 +258,8 @@ impl DatabaseDriver for PostgresDriver {
         }
         let session = self.session(id)?;
         let enums = session.enums()?;
-        let mut editor = session.editor.lock().await;
+        let slot = if request.browse { &session.browser } else { &session.editor };
+        let mut editor = slot.lock().await;
         if editor.is_none() {
             let mut connection = session.pool.acquire().await.map_err(db_err)?;
             let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
@@ -418,8 +408,10 @@ impl DatabaseDriver for PostgresDriver {
 }
 
 async fn close_session(session: &Session) {
-    if let Ok(mut editor) = session.editor.try_lock() {
-        editor.take();
+    for slot in [&session.editor, &session.browser] {
+        if let Ok(mut connection) = slot.try_lock() {
+            connection.take();
+        }
     }
     let _ = tokio::time::timeout(Duration::from_secs(3), session.pool.close()).await;
 }
@@ -571,10 +563,11 @@ fn relation_kind(table_type: &str) -> RelationKind {
 }
 
 async fn catalog_objects(pool: &PgPool) -> Result<Vec<TableSchema>, CoreError> {
-    let mut objects = routines(pool).await?;
-    objects.extend(sequences(pool).await?);
-    objects.extend(triggers(pool).await?);
-    objects.extend(indexes(pool).await?);
+    let (mut objects, sequences, triggers, indexes) =
+        tokio::try_join!(routines(pool), sequences(pool), triggers(pool), indexes(pool))?;
+    objects.extend(sequences);
+    objects.extend(triggers);
+    objects.extend(indexes);
     Ok(objects)
 }
 
@@ -746,34 +739,26 @@ async fn primary_keys(
     pool: &PgPool,
     only: Option<(&str, &str)>,
 ) -> Result<HashSet<(String, String, String)>, CoreError> {
+    // pg_constraint, not information_schema: its key views take seconds on
+    // databases with thousands of tables.
+    const KEYS: &str =
+        "SELECT n.nspname AS table_schema, c.relname AS table_name, a.attname AS column_name
+         FROM pg_catalog.pg_constraint con
+         JOIN pg_catalog.pg_class c ON c.oid = con.conrelid
+         JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+         JOIN pg_catalog.pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = ANY (con.conkey)
+         WHERE con.contype = 'p'
+           AND n.nspname NOT IN ('pg_catalog', 'information_schema')";
     let rows = match only {
-        Some((schema, table)) => sqlx::query(
-            "SELECT tc.table_schema, tc.table_name, kcu.column_name
-                 FROM information_schema.table_constraints tc
-                 JOIN information_schema.key_column_usage kcu
-                   ON tc.constraint_name = kcu.constraint_name
-                  AND tc.table_schema = kcu.table_schema
-                 WHERE tc.constraint_type = 'PRIMARY KEY'
-                   AND tc.table_schema = $1
-                   AND tc.table_name = $2",
-        )
-        .bind(schema)
-        .bind(table)
-        .fetch_all(pool)
-        .await
-        .map_err(db_err)?,
-        None => sqlx::query(
-            "SELECT tc.table_schema, tc.table_name, kcu.column_name
-                 FROM information_schema.table_constraints tc
-                 JOIN information_schema.key_column_usage kcu
-                   ON tc.constraint_name = kcu.constraint_name
-                  AND tc.table_schema = kcu.table_schema
-                 WHERE tc.constraint_type = 'PRIMARY KEY'
-                   AND tc.table_schema NOT IN ('pg_catalog', 'information_schema')",
-        )
-        .fetch_all(pool)
-        .await
-        .map_err(db_err)?,
+        Some((schema, table)) => {
+            sqlx::query(&format!("{KEYS} AND n.nspname = $1 AND c.relname = $2"))
+                .bind(schema)
+                .bind(table)
+                .fetch_all(pool)
+                .await
+                .map_err(db_err)?
+        }
+        None => sqlx::query(KEYS).fetch_all(pool).await.map_err(db_err)?,
     };
     rows.iter()
         .map(|row| {
@@ -785,6 +770,34 @@ async fn primary_keys(
         })
         .collect()
 }
+
+/// Every column of the tables, views, materialized views and foreign tables
+/// the user can reach, in the shape `column_from_row` reads. Built on
+/// pg_catalog: information_schema.columns is several times slower and leaves
+/// materialized views out. Callers append filters and an ORDER BY.
+const COLUMNS: &str = "SELECT n.nspname AS table_schema, c.relname AS table_name,
+        CASE c.relkind WHEN 'v' THEN 'VIEW' WHEN 'm' THEN 'MATERIALIZED VIEW' WHEN 'f' THEN 'FOREIGN'
+            ELSE 'BASE TABLE' END AS table_type,
+        a.attname AS column_name,
+        pg_catalog.format_type(a.atttypid, a.atttypmod) AS data_type,
+        un.nspname AS udt_schema, ut.typname AS udt_name,
+        CASE WHEN a.attnotnull OR (t.typtype = 'd' AND t.typnotnull) THEN 'NO' ELSE 'YES' END AS is_nullable,
+        CASE WHEN a.attgenerated = '' THEN pg_catalog.pg_get_expr(ad.adbin, ad.adrelid) END AS column_default,
+        pg_catalog.format_type(a.atttypid, a.atttypmod) AS full_type
+     FROM pg_catalog.pg_class c
+     JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+     JOIN pg_catalog.pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+     JOIN pg_catalog.pg_type t ON t.oid = a.atttypid
+     -- information_schema names a domain column by its base type (udt_*).
+     JOIN pg_catalog.pg_type ut ON ut.oid = CASE WHEN t.typtype = 'd' THEN t.typbasetype ELSE t.oid END
+     JOIN pg_catalog.pg_namespace un ON un.oid = ut.typnamespace
+     LEFT JOIN pg_catalog.pg_attrdef ad ON ad.adrelid = c.oid AND ad.adnum = a.attnum
+     WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')
+       AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+       AND n.nspname NOT LIKE 'pg\\_%' ESCAPE '\\'
+       -- The same visibility rule as information_schema.columns.
+       AND (pg_catalog.pg_has_role(c.relowner, 'USAGE')
+            OR pg_catalog.has_column_privilege(c.oid, a.attnum, 'SELECT, INSERT, UPDATE, REFERENCES'))";
 
 fn column_from_row(
     row: &PgRow,
@@ -899,7 +912,10 @@ fn param_type(param: &SqlValue) -> PgTypeInfo {
         SqlValue::Null | SqlValue::Int(_) => <i64 as sqlx::Type<Postgres>>::type_info(),
         SqlValue::Bool(_) => <bool as sqlx::Type<Postgres>>::type_info(),
         SqlValue::Float(_) => <f64 as sqlx::Type<Postgres>>::type_info(),
-        SqlValue::Text(_) => <&str as sqlx::Type<Postgres>>::type_info(),
+        // Text goes into the query as a quoted literal, which PostgreSQL types from
+        // its context: `id = '5'` compares as integer. Leaving the type unspecified
+        // (OID 0) here lets the describe step infer it the same way.
+        SqlValue::Text(_) => PgTypeInfo::with_oid(sqlx::postgres::types::Oid(0)),
         SqlValue::Bytes(_) => <&[u8] as sqlx::Type<Postgres>>::type_info(),
     }
 }

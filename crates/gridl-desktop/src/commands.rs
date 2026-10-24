@@ -62,6 +62,9 @@ pub struct ExecuteQueryRequest {
     /// The user confirmed a statement the safety policy asks about.
     #[serde(default)]
     pub authorized: bool,
+    /// A table browser read, run apart from the SQL editor's connection.
+    #[serde(default)]
+    pub browse: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -336,6 +339,7 @@ pub(crate) async fn run_query(
         Arc::clone(&cancel),
     )
     .map_err(fail)?;
+    let query = if request.browse { query.browsing() } else { query };
     let timer = timeout.map(|seconds| Timer::start(seconds, Arc::clone(&cancel)));
     let outcome = state.driver(engine).query(&id, &query, sink).await;
     // Once the timer fires the result is partial at best, even when the

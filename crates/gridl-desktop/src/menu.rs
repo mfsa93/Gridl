@@ -25,6 +25,27 @@ pub fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
             )?,
             &MenuItem::with_id(
                 app,
+                "quick-open",
+                tr!("Open Object…", "Abrir objeto…"),
+                true,
+                Some("CmdOrCtrl+P"),
+            )?,
+            &MenuItem::with_id(
+                app,
+                "new-sql-tab",
+                tr!("New SQL Tab", "Nueva pestaña SQL"),
+                true,
+                Some("CmdOrCtrl+T"),
+            )?,
+            &MenuItem::with_id(
+                app,
+                "open-connection",
+                tr!("Open Connection…", "Abrir conexión…"),
+                true,
+                Some("CmdOrCtrl+O"),
+            )?,
+            &MenuItem::with_id(
+                app,
                 "new-group",
                 tr!("New Group", "Nuevo grupo"),
                 true,

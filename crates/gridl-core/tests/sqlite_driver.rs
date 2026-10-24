@@ -427,3 +427,38 @@ async fn sqlite_reads_and_writes_back_every_storage_class_in_every_column_type()
     assert_eq!(again, stored, "every value keeps its class and content after saving it back");
     driver.disconnect(&id).await.expect("disconnect");
 }
+
+#[tokio::test]
+async fn sqlite_text_parameters_match_numeric_columns() {
+    let file = TempDb::new();
+    let driver = SqliteDriver::new();
+    let connection = config(&file.path);
+    driver.connect(&connection, None, None).await.expect("connect");
+    let id = connection.connection_id().expect("id");
+    let run = |sql: &str, params: Vec<SqlValue>| {
+        QueryRequest::new(
+            "query-1",
+            sql,
+            params,
+            DEFAULT_CHUNK_ROWS,
+            MAX_STREAM_ROWS,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .expect("request")
+    };
+    for sql in [
+        "CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)",
+        "INSERT INTO t VALUES (5, 'five'), (6, 'six')",
+    ] {
+        driver.query(&id, &run(sql, Vec::new()), &mut VecSink(Vec::new())).await.expect(sql);
+    }
+    // The parameters dialog sends every value as text.
+    let mut sink = VecSink(Vec::new());
+    let request = run(
+        "SELECT name FROM t WHERE id = ? OR name = ?",
+        vec![SqlValue::Text("5".into()), SqlValue::Text("it's".into())],
+    );
+    driver.query(&id, &request, &mut sink).await.expect("query");
+    let rows: Vec<_> = sink.0.into_iter().flat_map(|chunk| chunk.rows).collect();
+    assert_eq!(rows, vec![vec![SqlValue::Text("five".into())]]);
+}
