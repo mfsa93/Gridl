@@ -11,7 +11,7 @@ publish = false
 
 [workspace.dependencies]
 async-trait = "0.1"
-base64 = "0.22"
+base64 = "0.23"
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 dunce = "1"
 futures-util = "0.3"
