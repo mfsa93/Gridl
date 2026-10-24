@@ -708,3 +708,50 @@ async fn mysql_reads_and_writes_back_every_type() {
     }
     driver.disconnect(&id).await.expect("disconnect");
 }
+
+#[tokio::test]
+async fn mysql_explain_comes_back_as_json_text() {
+    let Some(target) = target() else { return };
+    let (driver, id) = open(&target, "my-explain", false).await;
+    let rows = run(
+        &driver,
+        &id,
+        "EXPLAIN FORMAT=JSON SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_ROWS > 1",
+    )
+    .await;
+    let SqlValue::Text(text) = rows[0][0].clone() else {
+        panic!("plan is not text: {:?}", rows[0][0])
+    };
+    let parsed: serde_json::Value = serde_json::from_str(&text).expect("plan json");
+    assert!(parsed["query_block"].is_object(), "{text}");
+    driver.disconnect(&id).await.expect("disconnect");
+}
+
+#[tokio::test]
+async fn mysql_text_parameters_match_numeric_columns() {
+    let Some(target) = target() else { return };
+    let (driver, id) = open(&target, "my-params", false).await;
+    run(&driver, &id, "DROP TABLE IF EXISTS gridl_params").await;
+    run(&driver, &id, "CREATE TABLE gridl_params (id INT PRIMARY KEY, name TEXT, at DATE)").await;
+    run(
+        &driver,
+        &id,
+        "INSERT INTO gridl_params VALUES (5, 'five', '2024-01-02'), (6, 'six', '2024-03-04')",
+    )
+    .await;
+    let request = QueryRequest::new(
+        "query-1",
+        "SELECT name FROM gridl_params WHERE (id = ? OR id = ? + 1) AND at >= ? AND name <> ? ORDER BY id",
+        vec![SqlValue::Text("5".into()), SqlValue::Text("5".into()), SqlValue::Text("2024-02-01".into()), SqlValue::Text("it's".into())],
+        DEFAULT_CHUNK_ROWS,
+        MAX_STREAM_ROWS,
+        Arc::new(AtomicBool::new(false)),
+    )
+    .expect("request");
+    let mut sink = VecSink(Vec::new());
+    driver.query(&id, &request, &mut sink).await.expect("query");
+    let rows: Vec<_> = sink.0.into_iter().flat_map(|chunk| chunk.rows).collect();
+    assert_eq!(rows, vec![vec![SqlValue::Text("six".into())]]);
+    run(&driver, &id, "DROP TABLE gridl_params").await;
+    driver.disconnect(&id).await.expect("disconnect");
+}

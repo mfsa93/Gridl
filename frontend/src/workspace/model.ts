@@ -1,10 +1,26 @@
-import { formatSqlValue, type ColumnDefinition, type SqlValue, type TableSchema } from "../lib/api";
+import { formatSqlValue, qualifiedName, type ColumnDefinition, type DatabaseEngine, type SqlValue, type TableSchema } from "../lib/api";
 import { isGeneratedColumn, canonicalTemporal, isTemporalColumn, type CellField } from "./changes";
 import { type ShownError } from "../lib/errors";
-import { plural, t } from "../lib/i18n";
+import type { PlanNode } from "./plan";
+import { formatNumber, plural, t } from "../lib/i18n";
 import { type TableFilter, type TableSort } from "./filters";
 
 export const sqlTabId = "sql";
+
+/** SQL editor tabs: the first is `sql`, later ones `sql:2`, `sql:3`… */
+export function isSqlTab(id: string): boolean {
+  return id === sqlTabId || id.startsWith(`${sqlTabId}:`);
+}
+
+/** The id for a new SQL tab, numbered after the highest one open. */
+export function nextSqlTabId(open: string[]): string {
+  const highest = Math.max(1, ...open.map(sqlTabNumber));
+  return `${sqlTabId}:${highest + 1}`;
+}
+
+export function sqlTabNumber(id: string): number {
+  return id === sqlTabId ? 1 : Number(id.slice(sqlTabId.length + 1)) || 1;
+}
 export const pageSizes = [50, 100, 250, 500];
 
 export type TableQuery = {
@@ -15,8 +31,42 @@ export type TableQuery = {
 export type TablePage = {
   page: number;
   pageSize: number;
-  total: number;
+  /** Rows on the shown page. */
+  shown: number;
+  /** All rows that match; null while they are still being counted. */
+  total: number | null;
+  /** The total is the planner's estimate, not a count. */
+  approximate?: boolean;
 };
+
+/** Status line of a table page: its range, the total once counted, and the time the page took. */
+export function pageStatus(page: TablePage, filtered: boolean, durationMs: number): string {
+  const from = page.shown === 0 ? 0 : page.page * page.pageSize + 1;
+  const to = page.page * page.pageSize + page.shown;
+  const took = durationMs > 0 ? ` · ${durationMs} ms` : "";
+  if (page.total === null) {
+    return `${page.shown === 0 ? t("app.status.loading") : t("app.status.rangeCounting", { from: formatNumber(from), to: formatNumber(to) })}${took}`;
+  }
+  if (page.total === 0 || page.shown === 0) return `${filtered ? t("app.status.noMatches") : plural("common.rows", 0)}${took}`;
+  const key = page.approximate ? "app.status.rangeApprox" : "app.status.range";
+  return `${t(key, { from: formatNumber(from), to: formatNumber(to), total: formatNumber(page.total) })}${took}`;
+}
+
+/** Above this many rows, a table shows the catalog's estimate instead of counting. */
+export const largeTableRows = 500_000;
+
+/** Reads the catalog's row estimate for `table`, or null when the engine keeps none. */
+export function rowEstimateSql(table: TableSchema, engine: DatabaseEngine): string | null {
+  if (engine === "postgres") {
+    // reltuples is -1 until the table is first analyzed, and 0 for plain views.
+    return `select reltuples::bigint from pg_catalog.pg_class where oid = to_regclass('${qualifiedName(table).replaceAll("'", "''")}')`;
+  }
+  if (engine === "mysql") {
+    const hex = (text: string) => Array.from(new TextEncoder().encode(text), (byte) => byte.toString(16).padStart(2, "0")).join("");
+    return `select table_rows from information_schema.tables where table_schema = convert(X'${hex(table.schema ?? "")}' using utf8mb4) and table_name = convert(X'${hex(table.name)}' using utf8mb4)`;
+  }
+  return null;
+}
 
 export function countValue(value: SqlValue | undefined): number {
   if (!value || value.t === "null") return 0;
@@ -39,7 +89,30 @@ export type TabView = {
   ran?: boolean;
   /** Set when the result stopped at a row limit and can be fetched again with more. */
   more?: { sql: string; limit: number } | null;
+  /** One entry per statement when a script ran several; `shown` is the one on screen. */
+  results?: ScriptResult[];
+  shown?: number;
+  /** The plan of the last statement, when the editor asked for one instead of running it. */
+  plan?: PlanNode[];
 };
+
+/** What one statement of a script returned, kept so its result can be shown again. */
+export type ScriptResult = {
+  sql: string;
+  columns: ColumnDefinition[];
+  rows: SqlValue[][];
+  rowsAffected: number;
+  durationMs: number;
+  error?: ShownError | null;
+};
+
+/** Short tab label for a script result: its number, verb, and what it returned. */
+export function scriptResultLabel(result: ScriptResult, index: number): string {
+  const verb = /^\s*(\w+)/.exec(result.sql)?.[1]?.toUpperCase() ?? "SQL";
+  if (result.error) return `${index + 1} · ${verb} · ${t("app.results.failed")}`;
+  const returnsRows = result.columns.length > 0;
+  return `${index + 1} · ${verb} · ${returnsRows ? plural("common.rows", result.rows.length) : plural("app.status.rowsAffected", result.rowsAffected)}`;
+}
 
 export type TableTab = {
   id: string;
@@ -80,6 +153,8 @@ export type WorkspaceDialog =
   | { kind: "rename-schema"; name: string }
   | { kind: "drop-schema"; name: string }
   | { kind: "create-table" }
+  | { kind: "save-query"; tab: string }
+  | { kind: "rename-sql-tab"; tab: string }
   | null;
 
 /** Identifies what a table tab shows, so stashed edits come back on the same page. */

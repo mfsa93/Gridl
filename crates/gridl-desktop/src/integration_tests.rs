@@ -78,6 +78,7 @@ fn query(id: &ConnectionId, query_id: &str, sql: &str) -> ExecuteQueryRequest {
         chunk_rows: None,
         max_rows: None,
         authorized: true,
+        browse: false,
     }
 }
 

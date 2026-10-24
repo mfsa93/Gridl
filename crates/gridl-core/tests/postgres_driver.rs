@@ -581,3 +581,94 @@ async fn postgres_routines_carry_arguments_and_result_type() {
     }
     driver.disconnect(&id).await.expect("disconnect");
 }
+
+#[tokio::test]
+async fn postgres_lists_materialized_views_with_their_columns() {
+    let Some(target) = target() else { return };
+    let (driver, id) = open(&target, "pg-matview", false).await;
+    run(&driver, &id, "DROP MATERIALIZED VIEW IF EXISTS gridl_mv").await;
+    run(
+        &driver,
+        &id,
+        "CREATE MATERIALIZED VIEW gridl_mv AS SELECT 1::integer AS n, 'a'::varchar(3) AS label",
+    )
+    .await;
+    let tables = driver.introspect(&id).await.expect("introspect");
+    let view = tables.iter().find(|table| table.name == "gridl_mv").expect("materialized view");
+    assert_eq!(view.kind, RelationKind::Materialized);
+    let columns: Vec<_> = view
+        .columns
+        .iter()
+        .map(|column| (column.name.as_str(), column.data_type.as_str()))
+        .collect();
+    assert_eq!(columns, vec![("n", "integer"), ("label", "character varying(3)")]);
+    run(&driver, &id, "DROP MATERIALIZED VIEW gridl_mv").await;
+    driver.disconnect(&id).await.expect("disconnect");
+}
+
+#[tokio::test]
+async fn postgres_browsing_does_not_wait_for_the_editor() {
+    let Some(target) = target() else { return };
+    let (driver, id) = open(&target, "pg-browse", false).await;
+    let editor = async {
+        let mut sink = VecSink(Vec::new());
+        let slow = request("SELECT pg_sleep(2)", Arc::new(AtomicBool::new(false)));
+        driver.query(&id, &slow, &mut sink).await.expect("editor query");
+    };
+    let browser = async {
+        // Let the editor statement start first.
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let started = Instant::now();
+        let mut sink = VecSink(Vec::new());
+        let read = request("SELECT 1", Arc::new(AtomicBool::new(false))).browsing();
+        driver.query(&id, &read, &mut sink).await.expect("browse query");
+        started.elapsed()
+    };
+    let ((), waited) = tokio::join!(editor, browser);
+    assert!(waited < Duration::from_secs(1), "the browse read waited {waited:?}");
+    driver.disconnect(&id).await.expect("disconnect");
+}
+
+#[tokio::test]
+async fn postgres_explain_comes_back_as_json_text() {
+    let Some(target) = target() else { return };
+    let (driver, id) = open(&target, "pg-explain", false).await;
+    let plan = first(
+        &run(&driver, &id, "EXPLAIN (FORMAT JSON) SELECT relname FROM pg_class WHERE oid > 1")
+            .await,
+    );
+    let SqlValue::Text(text) = plan else { panic!("plan is not text: {plan:?}") };
+    let parsed: serde_json::Value = serde_json::from_str(&text).expect("plan json");
+    assert!(parsed[0]["Plan"]["Node Type"].is_string(), "{text}");
+    driver.disconnect(&id).await.expect("disconnect");
+}
+
+#[tokio::test]
+async fn postgres_text_parameters_match_numeric_columns() {
+    let Some(target) = target() else { return };
+    let (driver, id) = open(&target, "pg-params", false).await;
+    run(&driver, &id, "DROP TABLE IF EXISTS gridl_params").await;
+    run(&driver, &id, "CREATE TABLE gridl_params (id int PRIMARY KEY, name text, at date)").await;
+    run(
+        &driver,
+        &id,
+        "INSERT INTO gridl_params VALUES (5, 'five', '2024-01-02'), (6, 'six', '2024-03-04')",
+    )
+    .await;
+    // The parameters dialog sends every value as text and a name used twice binds once.
+    let request = QueryRequest::new(
+        "query-1",
+        "SELECT name FROM gridl_params WHERE (id = $1 OR id = $1 + 1) AND at >= $2 AND name <> $3 ORDER BY id",
+        vec![SqlValue::Text("5".into()), SqlValue::Text("2024-02-01".into()), SqlValue::Text("it's".into())],
+        DEFAULT_CHUNK_ROWS,
+        MAX_STREAM_ROWS,
+        Arc::new(AtomicBool::new(false)),
+    )
+    .expect("request");
+    let mut sink = VecSink(Vec::new());
+    driver.query(&id, &request, &mut sink).await.expect("query");
+    let rows: Vec<_> = sink.0.into_iter().flat_map(|chunk| chunk.rows).collect();
+    assert_eq!(rows, vec![vec![SqlValue::Text("six".into())]]);
+    run(&driver, &id, "DROP TABLE gridl_params").await;
+    driver.disconnect(&id).await.expect("disconnect");
+}

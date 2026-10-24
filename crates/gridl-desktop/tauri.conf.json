@@ -58,6 +58,11 @@
     "createUpdaterArtifacts": true
   },
   "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["gridl"]
+      }
+    },
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDVENzNDODA2QjQyOTlCQTUKUldTbG15bTBCc2h6WFR3bHRNZXFXU3pOYTRjckVtdVgwSmVkNWdBWS9CSm1LV1BqeHd1MGRRK2EK",
       "endpoints": [

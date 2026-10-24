@@ -8,10 +8,10 @@ import { Compartment, EditorState, Prec } from "@codemirror/state";
 import { oneDark } from "@codemirror/theme-one-dark";
 import { EditorView, keymap, lineNumbers } from "@codemirror/view";
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
-import { format } from "sql-formatter";
 import type { DatabaseEngine } from "../lib/api";
 import { useColorScheme, type ColorScheme } from "../lib/appearance";
 import { activeSql } from "./activeSql";
+import { formatSql } from "./formatSql";
 import { forgetChecks, sqlDiagnostics, type SqlChecker } from "./diagnostics";
 
 export type SqlEditorHandle = {
@@ -64,11 +64,6 @@ const lightTheme = EditorView.theme({
 
 function appearanceExtension(scheme: ColorScheme) {
   return scheme === "dark" ? oneDark : [lightTheme, syntaxHighlighting(xcodeLight)];
-}
-
-function formatSql(source: string, engine: DatabaseEngine): string {
-  const dialect = engine === "postgres" ? "postgresql" : engine === "mysql" ? "mysql" : "sqlite";
-  return format(source, { language: dialect, keywordCase: "upper", tabWidth: 2 });
 }
 
 function sqlExtension(engine: DatabaseEngine, schema: Record<string, string[]>) {

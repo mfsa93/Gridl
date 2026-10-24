@@ -25,6 +25,7 @@ russh = "=0.63.1"
 serde.workspace = true
 serde_json.workspace = true
 tauri = { version = "2.11", features = ["macos-private-api"] }
+tauri-plugin-deep-link = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-process = "2"
 tauri-plugin-updater = "2"
