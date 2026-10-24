@@ -200,6 +200,7 @@ impl DatabaseDriver for PostgresDriver {
             kind: relation.kind,
             columns,
             definition: None,
+            returns: None,
         })
     }
 
@@ -247,6 +248,7 @@ impl DatabaseDriver for PostgresDriver {
                     kind: relation_kind(&kind),
                     columns: vec![column],
                     definition: None,
+                    returns: None,
                 });
             }
         }
@@ -581,7 +583,19 @@ async fn routines(pool: &PgPool) -> Result<Vec<TableSchema>, CoreError> {
         "SELECT n.nspname AS schema_name,
                 p.proname AS object_name,
                 CASE WHEN p.prokind = 'p' THEN 'procedure' ELSE 'function' END AS object_kind,
-                pg_get_function_identity_arguments(p.oid) AS identity_args,
+                COALESCE((
+                    SELECT json_agg(json_build_object(
+                        'name', COALESCE(NULLIF(p.proargnames[a.ord], ''), 'arg' || a.ord),
+                        'type', pg_catalog.format_type(a.typ, NULL),
+                        'mode', CASE p.proargmodes[a.ord]
+                            WHEN 'o' THEN 'OUT' WHEN 'b' THEN 'INOUT' WHEN 'v' THEN 'VARIADIC' ELSE 'IN' END,
+                        'default', pg_get_function_arg_default(p.oid, a.ord::int)
+                    ) ORDER BY a.ord)
+                    FROM unnest(COALESCE(p.proallargtypes, p.proargtypes::oid[])) WITH ORDINALITY AS a(typ, ord)
+                    -- 't' marks the columns of RETURNS TABLE, which are results, not parameters.
+                    WHERE COALESCE(p.proargmodes[a.ord], 'i') <> 't'
+                ), '[]')::text AS arguments,
+                CASE WHEN p.prokind = 'p' THEN NULL ELSE pg_get_function_result(p.oid) END AS result_type,
                 CASE
                     WHEN p.prokind = 'a' THEN NULL
                     ELSE pg_get_functiondef(p.oid)
@@ -601,13 +615,14 @@ async fn routines(pool: &PgPool) -> Result<Vec<TableSchema>, CoreError> {
 
 fn routine_from_row(row: &PgRow) -> Result<TableSchema, CoreError> {
     let kind: String = row.try_get("object_kind").map_err(db_err)?;
-    let args: String = row.try_get("identity_args").map_err(db_err)?;
+    let args: String = row.try_get("arguments").map_err(db_err)?;
     Ok(TableSchema {
         schema: Some(row.try_get("schema_name").map_err(db_err)?),
         name: row.try_get("object_name").map_err(db_err)?,
         kind: if kind == "procedure" { RelationKind::Procedure } else { RelationKind::Function },
-        columns: argument_columns(&args),
+        columns: argument_columns(&args)?,
         definition: row.try_get("definition").map_err(db_err)?,
+        returns: row.try_get("result_type").map_err(db_err)?,
     })
 }
 
@@ -631,6 +646,7 @@ async fn sequences(pool: &PgPool) -> Result<Vec<TableSchema>, CoreError> {
                 kind: RelationKind::Sequence,
                 columns: vec![plain_column("tipo", &data_type)],
                 definition: None,
+                returns: None,
             })
         })
         .collect()
@@ -660,6 +676,7 @@ async fn triggers(pool: &PgPool) -> Result<Vec<TableSchema>, CoreError> {
                 kind: RelationKind::Trigger,
                 columns: Vec::new(),
                 definition: row.try_get("definition").map_err(db_err)?,
+                returns: None,
             })
         })
         .collect()
@@ -684,94 +701,33 @@ async fn indexes(pool: &PgPool) -> Result<Vec<TableSchema>, CoreError> {
                 kind: RelationKind::Index,
                 columns: Vec::new(),
                 definition: row.try_get("indexdef").map_err(db_err)?,
+                returns: None,
             })
         })
         .collect()
 }
 
-fn argument_columns(args: &str) -> Vec<ColumnDefinition> {
-    split_args(args)
+/// One routine parameter as the catalog query above describes it.
+#[derive(serde::Deserialize)]
+struct Argument {
+    name: String,
+    #[serde(rename = "type")]
+    data_type: String,
+    mode: String,
+    default: Option<String>,
+}
+
+fn argument_columns(args: &str) -> Result<Vec<ColumnDefinition>, CoreError> {
+    let arguments: Vec<Argument> = serde_json::from_str(args)
+        .map_err(|error| CoreError::Database(format!("routine arguments: {error}")))?;
+    Ok(arguments
         .into_iter()
-        .enumerate()
-        .filter_map(|(index, part)| {
-            let part = part.trim();
-            if part.is_empty() {
-                return None;
-            }
-            let (name, data_type) = split_argument(part, index);
-            Some(plain_column(&name, &data_type))
+        .map(|argument| ColumnDefinition {
+            default_value: argument.default,
+            mode: Some(argument.mode),
+            ..plain_column(&argument.name, &argument.data_type)
         })
-        .collect()
-}
-
-fn split_args(args: &str) -> Vec<&str> {
-    let mut parts = Vec::new();
-    let mut start = 0;
-    let mut depth: i32 = 0;
-    for (index, char) in args.char_indices() {
-        match char {
-            '(' => depth += 1,
-            ')' => depth = depth.saturating_sub(1),
-            ',' if depth == 0 => {
-                parts.push(&args[start..index]);
-                start = index + char.len_utf8();
-            }
-            _ => {}
-        }
-    }
-    if start < args.len() {
-        parts.push(&args[start..]);
-    }
-    parts
-}
-
-fn split_argument(part: &str, index: usize) -> (String, String) {
-    let stripped = part
-        .strip_prefix("VARIADIC ")
-        .or_else(|| part.strip_prefix("INOUT "))
-        .or_else(|| part.strip_prefix("OUT "))
-        .or_else(|| part.strip_prefix("IN "))
-        .unwrap_or(part)
-        .trim();
-    let Some((name, data_type)) = stripped.split_once(char::is_whitespace) else {
-        return (format!("arg{}", index + 1), stripped.to_owned());
-    };
-    if is_type_word(name) {
-        return (format!("arg{}", index + 1), stripped.to_owned());
-    }
-    (name.to_owned(), data_type.trim().to_owned())
-}
-
-fn is_type_word(word: &str) -> bool {
-    matches!(
-        word.to_ascii_lowercase().as_str(),
-        "bigint"
-            | "boolean"
-            | "bool"
-            | "bytea"
-            | "character"
-            | "date"
-            | "decimal"
-            | "double"
-            | "float"
-            | "int"
-            | "int2"
-            | "int4"
-            | "int8"
-            | "integer"
-            | "interval"
-            | "json"
-            | "jsonb"
-            | "numeric"
-            | "real"
-            | "smallint"
-            | "text"
-            | "time"
-            | "timestamp"
-            | "uuid"
-            | "varchar"
-            | "xml"
-    )
+        .collect())
 }
 
 fn plain_column(name: &str, data_type: &str) -> ColumnDefinition {
@@ -782,6 +738,7 @@ fn plain_column(name: &str, data_type: &str) -> ColumnDefinition {
         primary_key: false,
         default_value: None,
         options: Vec::new(),
+        mode: None,
     }
 }
 
@@ -863,6 +820,7 @@ fn column_from_row(
         nullable: nullable.eq_ignore_ascii_case("YES"),
         default_value,
         options,
+        mode: None,
     })
 }
 

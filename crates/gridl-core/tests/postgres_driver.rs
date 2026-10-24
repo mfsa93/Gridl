@@ -521,3 +521,63 @@ async fn postgres_reads_and_writes_back_every_type() {
     }
     driver.disconnect(&id).await.expect("disconnect");
 }
+
+#[tokio::test]
+async fn postgres_routines_carry_arguments_and_result_type() {
+    let Some(target) = target() else { return };
+    let (driver, id) = open(&target, "pg-routines", false).await;
+    for sql in [
+        "CREATE OR REPLACE FUNCTION gridl_total(p_id integer, p_from date DEFAULT '2024-01-01', OUT p_sum numeric) LANGUAGE sql AS 'SELECT 1::numeric'",
+        "CREATE OR REPLACE FUNCTION gridl_rows(integer) RETURNS TABLE(id integer) LANGUAGE sql AS 'SELECT 1'",
+        "CREATE OR REPLACE PROCEDURE gridl_touch(IN amount integer, INOUT result integer DEFAULT 0) LANGUAGE sql AS 'SELECT 1'",
+    ] {
+        run(&driver, &id, sql).await;
+    }
+    let tables = driver.introspect(&id).await.expect("introspect");
+    let routine = |name: &str| tables.iter().find(|table| table.name == name).expect(name).clone();
+    let described = |name: &str| {
+        routine(name)
+            .columns
+            .iter()
+            .map(|column| {
+                (
+                    column.name.clone(),
+                    column.data_type.clone(),
+                    column.mode.clone().unwrap_or_default(),
+                    column.default_value.clone(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let arg = |name: &str, data_type: &str, mode: &str, default: Option<&str>| {
+        (name.to_owned(), data_type.to_owned(), mode.to_owned(), default.map(str::to_owned))
+    };
+
+    let total = routine("gridl_total");
+    assert_eq!(total.kind, RelationKind::Function);
+    assert_eq!(total.returns.as_deref(), Some("numeric"));
+    assert_eq!(
+        described("gridl_total"),
+        vec![
+            arg("p_id", "integer", "IN", None),
+            arg("p_from", "date", "IN", Some("'2024-01-01'::date")),
+            arg("p_sum", "numeric", "OUT", None),
+        ]
+    );
+    assert_eq!(routine("gridl_rows").returns.as_deref(), Some("TABLE(id integer)"));
+    assert_eq!(described("gridl_rows"), vec![arg("arg1", "integer", "IN", None)]);
+    let touch = routine("gridl_touch");
+    assert_eq!(touch.kind, RelationKind::Procedure);
+    assert_eq!(touch.returns, None);
+    assert_eq!(
+        described("gridl_touch"),
+        vec![arg("amount", "integer", "IN", None), arg("result", "integer", "INOUT", Some("0"))]
+    );
+
+    for sql in
+        ["DROP FUNCTION gridl_total", "DROP FUNCTION gridl_rows", "DROP PROCEDURE gridl_touch"]
+    {
+        run(&driver, &id, sql).await;
+    }
+    driver.disconnect(&id).await.expect("disconnect");
+}

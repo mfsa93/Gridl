@@ -191,6 +191,7 @@ impl DatabaseDriver for MysqlDriver {
             kind: relation.kind,
             columns,
             definition: None,
+            returns: None,
         })
     }
 
@@ -233,6 +234,7 @@ impl DatabaseDriver for MysqlDriver {
                         name,
                         columns: vec![column],
                         definition,
+                        returns: None,
                     });
                 }
             }
@@ -692,6 +694,7 @@ fn column_from_row(
         primary_key: keys.contains(&(table, name.clone())),
         name,
         options: enum_labels(&data_type),
+        mode: None,
         data_type,
         nullable: nullable.eq_ignore_ascii_case("YES"),
         default_value,
@@ -827,9 +830,14 @@ async fn routines(pool: &MySqlPool, schema: &str) -> Result<Vec<TableSchema>, Co
                 kind: if procedure { RelationKind::Procedure } else { RelationKind::Function },
                 columns: args
                     .iter()
-                    .map(|(_, arg, data_type)| plain_column(arg, data_type))
+                    .map(|(mode, arg, data_type)| ColumnDefinition {
+                        // Function parameters have no mode in the catalog; they are all inputs.
+                        mode: Some(mode.clone().unwrap_or_else(|| "IN".to_owned())),
+                        ..plain_column(arg, data_type)
+                    })
                     .collect(),
                 definition,
+                returns,
             })
         })
         .collect()
@@ -865,6 +873,7 @@ async fn triggers(pool: &MySqlPool, schema: &str) -> Result<Vec<TableSchema>, Co
                 kind: RelationKind::Trigger,
                 columns: Vec::new(),
                 definition: Some(definition),
+                returns: None,
             })
         })
         .collect()
@@ -948,6 +957,7 @@ async fn indexes(
                 kind: RelationKind::Index,
                 columns: Vec::new(),
                 definition: Some(definition),
+                returns: None,
             }
         })
         .collect())
@@ -961,6 +971,7 @@ fn plain_column(name: &str, data_type: &str) -> ColumnDefinition {
         primary_key: false,
         default_value: None,
         options: Vec::new(),
+        mode: None,
     }
 }
 

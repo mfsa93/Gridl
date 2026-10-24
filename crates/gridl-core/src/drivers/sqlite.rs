@@ -189,6 +189,7 @@ impl DatabaseDriver for SqliteDriver {
                 kind: relation.kind,
                 columns: Vec::new(),
                 definition,
+                returns: None,
             });
         }
         let columns = table_info(&pool, &relation.name).await?;
@@ -198,6 +199,7 @@ impl DatabaseDriver for SqliteDriver {
             kind: relation.kind,
             columns,
             definition: None,
+            returns: None,
         })
     }
 
@@ -456,6 +458,7 @@ async fn table_info(pool: &SqlitePool, table: &str) -> Result<Vec<ColumnDefiniti
                 primary_key: primary_key > 0,
                 default_value,
                 options: Vec::new(),
+                mode: None,
             })
         })
         .collect()
