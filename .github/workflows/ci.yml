@@ -3,11 +3,11 @@ name: CI
 # Checks only: builds and tests, never packages. Releases come from release.yml on v* tags.
 # Pull requests only: master and develop change through PRs, and a PR's run
 # already tests the merged result, so a second run on push would repeat it.
+# Every pull request gets a run, because branch protection requires these
+# checks; when only docs or the license changed, the jobs are skipped, which
+# counts as passing.
 on:
   pull_request:
-    paths-ignore:
-      - "**/*.md"
-      - LICENSE
 
 # A newer push to the same branch or PR cancels the run still in progress.
 concurrency:
@@ -15,8 +15,27 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Changes
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          predicate-quantifier: every
+          filters: |
+            code:
+              - "**"
+              - "!**/*.md"
+              - "!LICENSE"
+
   core:
     name: Rust core
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
@@ -75,6 +94,8 @@ jobs:
 
   desktop:
     name: Tauri shell
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -97,6 +118,8 @@ jobs:
 
   frontend:
     name: Frontend
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

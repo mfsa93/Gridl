@@ -292,10 +292,4 @@ An engine is a driver (`DatabaseDriver`) and a spec (`EngineSpec` in `crates/gri
 
 ## License
 
-Copyright © 2026 Michael Sanchez.
-
-Gridl is free software: you can redistribute it and/or modify it under the terms of the [GNU General Public License](LICENSE) as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version. It is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-
-In short: you may use Gridl for anything, at home or at work, and share or sell copies, as long as every copy, changed or not, keeps the copyright notice and the license, and comes with its source code under the same terms. Changed versions must say they were changed.
-
-Versions before 0.5.0 were published under the MIT license.
+Copyright © 2026 Michael Sanchez. Gridl is licensed under the [GNU GPL, version 3 or any later version](LICENSE). Versions before 0.5.0 were published under the MIT license.
