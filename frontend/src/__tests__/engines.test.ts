@@ -33,7 +33,7 @@ describe("engine specs", () => {
   afterAll(() => setEngines(builtins));
 
   it("describes every built-in engine", () => {
-    expect(allEngines().map((spec) => spec.id)).toEqual(["postgres", "mysql", "sqlite"]);
+    expect(allEngines().map((spec) => spec.id)).toEqual(["postgres", "mysql", "sqlite", "sqlserver"]);
     expect(engineSpec("mysql").sql.identifierQuote).toBe("`");
   });
 

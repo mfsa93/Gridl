@@ -164,7 +164,8 @@ pub fn text_literal(text: &str, engine: DatabaseEngine) -> String {
     } else {
         text.into()
     };
-    format!("'{}'", escaped.replace('\'', "''"))
+    let prefix = if engine_spec(engine).sql.national_text { "N" } else { "" };
+    format!("{prefix}'{}'", escaped.replace('\'', "''"))
 }
 
 /// One cell as a SQL literal, like `sqlLiteral` in the frontend.
@@ -183,6 +184,8 @@ pub fn sql_literal(value: &SqlValue, engine: DatabaseEngine) -> String {
             match engine_spec(engine).sql.bytes {
                 BytesLiteral::EscapedHex => format!("'\\x{hex}'"),
                 BytesLiteral::XHex => format!("X'{hex}'"),
+                BytesLiteral::PrefixedHex if bytes.is_empty() => "0x".into(),
+                BytesLiteral::PrefixedHex => format!("0x{hex}"),
             }
         }
         SqlValue::Text(text) => text_literal(text, engine),

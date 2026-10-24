@@ -756,6 +756,13 @@ html.vibrant .sidebar-card, html.vibrant .explorer, html.vibrant .details-panel 
 .tree-section { padding: 0 8px 10px; min-width: 0; overflow-x: hidden; overflow-y: auto; }
 .tree-title { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 4px 8px; color: var(--label); font-size: 13px; font-weight: 600; }
 .tree-title span, .tree-item > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.schema-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--label-2);
+}
+
 .tree-item {
   display: flex;
   align-items: center;

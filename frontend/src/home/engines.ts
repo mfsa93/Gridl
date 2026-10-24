@@ -15,6 +15,7 @@ const descriptions: Record<string, () => string> = {
   postgres: () => t("home.engine.postgres"),
   mysql: () => t("home.engine.mysql"),
   sqlite: () => t("home.engine.sqlite"),
+  sqlserver: () => t("home.engine.sqlserver"),
 };
 
 /** The engines a new connection can use, as the engine specs describe them. */

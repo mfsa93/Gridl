@@ -42,9 +42,22 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 20
+      sqlserver:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: "Y"
+          MSSQL_SA_PASSWORD: Gridl_Test1
+        ports:
+          - 1433:1433
+        options: >-
+          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P Gridl_Test1 -Q 'SELECT 1'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 30
     env:
       GRIDL_TEST_PG: postgres:gridl@127.0.0.1:5432/gridl
       GRIDL_TEST_MYSQL: root:gridl@127.0.0.1:3306/gridl
+      GRIDL_TEST_MSSQL: sa:Gridl_Test1@127.0.0.1:1433/gridl
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.98.0

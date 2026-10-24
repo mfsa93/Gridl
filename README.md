@@ -1,6 +1,6 @@
 # Gridl
 
-A desktop database client that looks and feels like a macOS app. It works with **PostgreSQL**, **MySQL / MariaDB**, and **SQLite**. The UI runs on Tauri 2 and the data engine is a standalone Rust crate, with no Electron: the app weighs about 20 MB and uses a fraction of the memory of Electron or Java based clients.
+A desktop database client that looks and feels like a macOS app. It works with **PostgreSQL**, **MySQL / MariaDB**, **SQLite**, and **SQL Server / Azure SQL**. The UI runs on Tauri 2 and the data engine is a standalone Rust crate, with no Electron: the app weighs about 20 MB and uses a fraction of the memory of Electron or Java based clients.
 
 Gridl is available in English and Spanish and follows the system language.
 
@@ -61,7 +61,7 @@ The **Backup** menu uses each engine's command line tools. For PostgreSQL and My
 brew install libpq mysql-client
 ```
 
-SQLite needs nothing extra.
+SQLite needs nothing extra. SQL Server backups are written on the server itself (`BACKUP DATABASE`), so the menu is off for it.
 
 ### Uninstall
 
@@ -256,10 +256,10 @@ frontend/                  React, CodeMirror 6, Glide Data Grid
 crates/gridl-desktop/      Tauri shell: IPC commands, windows, profiles, keychain,
         |                  safety policy, export, import, and backup
         |  DatabaseDriver, CredentialVault
-crates/gridl-core/         ports and drivers (SQLite, PostgreSQL, MySQL/MariaDB)
+crates/gridl-core/         ports and drivers (SQLite, PostgreSQL, MySQL/MariaDB, SQL Server)
 ```
 
-`DatabaseDriver` is the port; `SqliteDriver`, `PostgresDriver`, and `MysqlDriver` are the adapters, registered in `builtin_drivers()`. Each engine's differences live in its `EngineSpec`, which the frontend reads through `list_engines`. The shell does not speak SQL: it opens a session, asks for the catalog, and consumes row chunks. Passwords are not part of `ConnectionConfig`; they are stored with the `keyring` crate (Keychain, Credential Manager, or Secret Service).
+`DatabaseDriver` is the port; `SqliteDriver`, `PostgresDriver`, `MysqlDriver`, and `SqlserverDriver` are the adapters, registered in `builtin_drivers()`. Each adapter is a folder split by responsibility (`connect`, `catalog`, `query`), and what they share (sessions, cancellation, chunk streaming, results) lives once in `drivers/common/`. Each engine's differences live in its `EngineSpec`, which the frontend reads through `list_engines`. The shell does not speak SQL: it opens a session, asks for the catalog, and consumes row chunks. Passwords are not part of `ConnectionConfig`; they are stored with the `keyring` crate (Keychain, Credential Manager, or Secret Service).
 
 - **Streaming**: queries are never materialized whole. The driver pushes 500-row `RowChunk`s through a Tauri `Channel` and the grid virtualizes rendering. Caps: 1,000,000 rows per result and 256 KiB per cell.
 - **Editor session**: each connection keeps a pinned connection for the editor, so transactions span several queries. Inline error checking uses another pool connection, so it never aborts an open transaction.
@@ -273,8 +273,9 @@ crates/gridl-core/         ports and drivers (SQLite, PostgreSQL, MySQL/MariaDB)
 ```text
 Cargo.toml                          workspace
 crates/gridl-core/                  DatabaseDriver, types, drivers, safety policy, export and import
-crates/gridl-core/tests/            per-engine tests (PG and MySQL against a real server)
-crates/gridl-desktop/               Tauri app: commands, windows, menu, SSH tunnel, backup
+crates/gridl-core/tests/            per-engine tests (PG, MySQL and SQL Server against a real server)
+crates/gridl-desktop/src/commands/  IPC commands by area: profiles, session, catalog, query, guard
+crates/gridl-desktop/src/           windows, menu, SSH tunnel, team space, transfer/, backup/
 crates/gridl-desktop/icons/         icons (source.svg is the original)
 frontend/src/App.tsx                workspace
 frontend/src/workspace/             model, grid, structure, relations, export, import

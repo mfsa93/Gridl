@@ -30,7 +30,10 @@
         "current_time",
         "now()"
       ],
-      "outParamVariables": false
+      "outParamVariables": false,
+      "nationalText": false,
+      "paging": "limit-offset",
+      "procedureCall": "call"
     },
     "structure": {
       "schemas": true,
@@ -147,7 +150,9 @@
       "alterColumns": true,
       "uniqueOnAdd": true,
       "alterForeignKeys": true,
-      "dropForeignKey": "drop constraint"
+      "dropForeignKey": "drop constraint",
+      "listSchemas": "select schema_name\nfrom information_schema.schemata\nwhere schema_name not in ('pg_catalog', 'information_schema')\n  and schema_name not like 'pg\\_%' escape '\\'\norder by schema_name",
+      "renameSchemas": true
     },
     "tools": {
       "explain": "postgres-json",
@@ -187,7 +192,10 @@
         "current_time",
         "now()"
       ],
-      "outParamVariables": true
+      "outParamVariables": true,
+      "nationalText": false,
+      "paging": "limit-offset",
+      "procedureCall": "call"
     },
     "structure": {
       "schemas": false,
@@ -295,7 +303,9 @@
       "alterColumns": true,
       "uniqueOnAdd": true,
       "alterForeignKeys": true,
-      "dropForeignKey": "drop foreign key"
+      "dropForeignKey": "drop foreign key",
+      "listSchemas": null,
+      "renameSchemas": false
     },
     "tools": {
       "explain": "mysql-json",
@@ -339,7 +349,10 @@
         "time('now')",
         "datetime('now')"
       ],
-      "outParamVariables": false
+      "outParamVariables": false,
+      "nationalText": false,
+      "paging": "limit-offset",
+      "procedureCall": "call"
     },
     "structure": {
       "schemas": false,
@@ -373,12 +386,188 @@
       "alterColumns": false,
       "uniqueOnAdd": false,
       "alterForeignKeys": false,
-      "dropForeignKey": "drop constraint"
+      "dropForeignKey": "drop constraint",
+      "listSchemas": null,
+      "renameSchemas": false
     },
     "tools": {
       "explain": "sqlite-query-plan",
       "rowEstimate": null,
       "backup": "vacuum-into",
+      "restore": false
+    }
+  },
+  {
+    "id": "sqlserver",
+    "name": "SQL Server",
+    "short": "Ms",
+    "color": "#ef4444",
+    "connection": {
+      "fileBased": false,
+      "defaultPort": 1433,
+      "defaultUser": "sa",
+      "defaultName": "SQL Server",
+      "fileExtensions": []
+    },
+    "sql": {
+      "identifierQuote": "\"",
+      "params": "question",
+      "paramCasts": false,
+      "dialect": "transactsql",
+      "backslashEscapes": false,
+      "hashComments": false,
+      "dollarQuotes": false,
+      "textCast": "NVARCHAR(MAX)",
+      "nullSafeDiffers": "exists-except",
+      "contains": "like-escape",
+      "booleans": "number",
+      "bytes": "prefixed-hex",
+      "emptyInsert": "default values",
+      "now": [
+        "cast(sysdatetime() as date)",
+        "cast(sysdatetime() as time)",
+        "sysdatetime()"
+      ],
+      "outParamVariables": false,
+      "nationalText": true,
+      "paging": "offset-fetch",
+      "procedureCall": "exec"
+    },
+    "structure": {
+      "schemas": true,
+      "ddl": "sqlserver",
+      "columnTypes": [
+        {
+          "name": "nvarchar",
+          "kind": "length"
+        },
+        {
+          "name": "nvarchar(max)",
+          "kind": "plain"
+        },
+        {
+          "name": "varchar",
+          "kind": "length"
+        },
+        {
+          "name": "varchar(max)",
+          "kind": "plain"
+        },
+        {
+          "name": "nchar",
+          "kind": "length"
+        },
+        {
+          "name": "char",
+          "kind": "length"
+        },
+        {
+          "name": "tinyint",
+          "kind": "plain"
+        },
+        {
+          "name": "smallint",
+          "kind": "plain"
+        },
+        {
+          "name": "int",
+          "kind": "plain"
+        },
+        {
+          "name": "bigint",
+          "kind": "plain"
+        },
+        {
+          "name": "int identity",
+          "kind": "plain",
+          "generated": true
+        },
+        {
+          "name": "bigint identity",
+          "kind": "plain",
+          "generated": true
+        },
+        {
+          "name": "bit",
+          "kind": "plain"
+        },
+        {
+          "name": "decimal",
+          "kind": "numeric"
+        },
+        {
+          "name": "money",
+          "kind": "plain"
+        },
+        {
+          "name": "real",
+          "kind": "plain"
+        },
+        {
+          "name": "float",
+          "kind": "plain"
+        },
+        {
+          "name": "date",
+          "kind": "plain"
+        },
+        {
+          "name": "time",
+          "kind": "plain"
+        },
+        {
+          "name": "datetime2",
+          "kind": "plain"
+        },
+        {
+          "name": "datetimeoffset",
+          "kind": "plain"
+        },
+        {
+          "name": "datetime",
+          "kind": "plain"
+        },
+        {
+          "name": "uniqueidentifier",
+          "kind": "plain"
+        },
+        {
+          "name": "varbinary",
+          "kind": "length"
+        },
+        {
+          "name": "varbinary(max)",
+          "kind": "plain"
+        },
+        {
+          "name": "xml",
+          "kind": "plain"
+        }
+      ],
+      "keyType": "int identity",
+      "lengthHint": "255",
+      "referenceRules": [
+        [
+          "^int( identity)?$",
+          "int"
+        ],
+        [
+          "^bigint( identity)?$",
+          "bigint"
+        ]
+      ],
+      "referenceFallback": null,
+      "alterColumns": true,
+      "uniqueOnAdd": true,
+      "alterForeignKeys": true,
+      "dropForeignKey": "drop constraint",
+      "listSchemas": "select name from sys.schemas\nwhere schema_id < 16384 and name not in ('sys', 'INFORMATION_SCHEMA', 'guest')\norder by name",
+      "renameSchemas": false
+    },
+    "tools": {
+      "explain": null,
+      "rowEstimate": "sys-partitions",
+      "backup": null,
       "restore": false
     }
   }

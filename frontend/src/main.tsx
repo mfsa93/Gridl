@@ -30,8 +30,9 @@ if (!root) {
   throw new Error(t("error.noRoot"));
 }
 
-// The backend lists the engines it can open; the built-in copy covers a failure.
-await listEngines().then(setEngines).catch(() => undefined);
+// The window paints at once with the built-in engines; the backend's list
+// (the same today, plugins later) replaces it when it arrives.
+void listEngines().then(setEngines).catch(() => undefined);
 
 createRoot(root).render(
   <StrictMode>

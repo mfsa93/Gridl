@@ -12,8 +12,8 @@ use crate::vault::KeyringVault;
 pub const KEYRING_SERVICE: &str = "app.gridl.desktop";
 
 /// One open session: the config it was opened with and, when it goes through
-/// an SSH tunnel, the local end of that tunnel, so external tools such as
-/// `pg_dump` can reach the same server.
+/// an SSH tunnel, the local end of that tunnel, so the engine's backup tools
+/// can reach the same server.
 #[derive(Debug, Clone)]
 pub struct Session {
     pub config: ConnectionConfig,
@@ -55,6 +55,22 @@ impl AppState {
             .find(|driver| driver.engine() == engine)
             .map(Box::as_ref)
             .expect("every engine has a driver in gridl_core::builtin_drivers")
+    }
+
+    /// The id and driver of an open session, for a command that acts on it.
+    pub fn open_session(
+        &self,
+        connection_id: String,
+    ) -> Result<(ConnectionId, &dyn DatabaseDriver), CoreError> {
+        let id = ConnectionId::new(connection_id)?;
+        let engine = self.engine(id.as_str())?;
+        Ok((id, self.driver(engine)))
+    }
+
+    /// Drops the bookkeeping and the SSH tunnel of a session the driver closed.
+    pub fn forget(&self, id: &ConnectionId) {
+        self.untrack(id);
+        self.drop_tunnel(id.as_str());
     }
 
     pub fn track(
