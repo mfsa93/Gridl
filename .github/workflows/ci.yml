@@ -1,10 +1,12 @@
 name: CI
 
 # Checks only: builds and tests, never packages. Releases come from release.yml on v* tags.
+# Pull requests only: master and develop change through PRs, and a PR's run
+# already tests the merged result, so a second run on push would repeat it.
 on:
   pull_request:
-  push:
-    branches: [master, develop]
+    paths-ignore:
+      - "**/*.md"
 
 # A newer push to the same branch or PR cancels the run still in progress.
 concurrency:
