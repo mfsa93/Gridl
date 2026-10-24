@@ -8,6 +8,7 @@ use std::io::{self, Write};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use serde::Deserialize;
 
+use crate::engines::{spec as engine_spec, BooleanLiteral, BytesLiteral};
 use crate::types::{ColumnDefinition, DatabaseEngine};
 use crate::value::SqlValue;
 
@@ -149,21 +150,22 @@ impl<W: Write> ExportWriter<W> {
     }
 }
 
-/// Quotes a column name the way the engine expects: backticks for MySQL, double quotes otherwise.
+/// Quotes a column name with the engine's identifier quote.
 pub fn quote_ident(name: &str, engine: DatabaseEngine) -> String {
-    let quote = if engine == DatabaseEngine::Mysql { '`' } else { '"' };
+    let quote = engine_spec(engine).sql.identifier_quote;
     let doubled = format!("{quote}{quote}");
     format!("{quote}{}{quote}", name.replace(quote, &doubled))
 }
 
-/// Quotes text as a string literal. MySQL also treats backslash as an escape.
+/// Quotes text as a string literal, doubling backslashes where the engine reads them as escapes.
 pub fn text_literal(text: &str, engine: DatabaseEngine) -> String {
-    let escaped: Cow<'_, str> = if engine == DatabaseEngine::Mysql {
+    let escaped: Cow<'_, str> = if engine_spec(engine).sql.backslash_escapes {
         text.replace('\\', "\\\\").into()
     } else {
         text.into()
     };
-    format!("'{}'", escaped.replace('\'', "''"))
+    let prefix = if engine_spec(engine).sql.national_text { "N" } else { "" };
+    format!("{prefix}'{}'", escaped.replace('\'', "''"))
 }
 
 /// One cell as a SQL literal, like `sqlLiteral` in the frontend.
@@ -173,16 +175,17 @@ pub fn sql_literal(value: &SqlValue, engine: DatabaseEngine) -> String {
         SqlValue::Int(value) => value.to_string(),
         SqlValue::Float(value) if value.is_finite() => js_number(*value),
         SqlValue::Float(value) => format!("'{value}'"),
-        SqlValue::Bool(value) if engine == DatabaseEngine::Sqlite => {
-            if *value { "1" } else { "0" }.into()
-        }
-        SqlValue::Bool(value) => if *value { "TRUE" } else { "FALSE" }.into(),
+        SqlValue::Bool(value) => match engine_spec(engine).sql.booleans {
+            BooleanLiteral::Number => if *value { "1" } else { "0" }.into(),
+            BooleanLiteral::Keyword => if *value { "TRUE" } else { "FALSE" }.into(),
+        },
         SqlValue::Bytes(bytes) => {
             let hex: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
-            if engine == DatabaseEngine::Postgres {
-                format!("'\\x{hex}'")
-            } else {
-                format!("X'{hex}'")
+            match engine_spec(engine).sql.bytes {
+                BytesLiteral::EscapedHex => format!("'\\x{hex}'"),
+                BytesLiteral::XHex => format!("X'{hex}'"),
+                BytesLiteral::PrefixedHex if bytes.is_empty() => "0x".into(),
+                BytesLiteral::PrefixedHex => format!("0x{hex}"),
             }
         }
         SqlValue::Text(text) => text_literal(text, engine),

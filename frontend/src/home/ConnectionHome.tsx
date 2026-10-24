@@ -1,3 +1,4 @@
+import { allEngines } from "../engines";
 import {
   Check,
   ChevronLeft, ChevronRight,
@@ -21,8 +22,8 @@ import { ConnectingStatus, type ConnectingState } from "./ConnectingStatus";
 import { errorMessage, type BrowseKind, type ConnectionCatalog, type ConnectionConfig, type DatabaseEngine, type TeamState, type TestResult, type TlsMode } from "../lib/api";
 import { environmentLabel } from "../lib/environments";
 import { SafetyFields } from "./SafetyFields";
-import { blankDraft, draftFromProfile, subtitle, type Draft } from "./draft";
-import { ENGINES } from "./engines";
+import { blankDraft, draftFromProfile, fileBased, subtitle, type Draft } from "./draft";
+import { engineOptions } from "./engines";
 import { plural, t } from "../lib/i18n";
 
 export type HomeCommand = { nonce: number; kind: "new-connection" | "new-group" };
@@ -210,7 +211,7 @@ export function ConnectionHome({
             {error ? <p className="form-error">{error}</p> : null}
             <div className="connection-list">
               {filtered.map((profile) => {
-                const engine = ENGINES.find((item) => item.id === profile.engine);
+                const engine = engineOptions().find((item) => item.id === profile.engine);
                 const opening = connecting?.id === profile.id ? connecting : null;
                 return (
                   <div
@@ -407,11 +408,11 @@ function ConnectionModal({
   onSave: (draft: Draft, openAfter: boolean) => Promise<void>;
 }) {
   const [filter, setFilter] = useState("");
-  const [selected, setSelected] = useState<DatabaseEngine>(phase.kind === "form" ? phase.draft.engine : "postgres");
+  const [selected, setSelected] = useState<DatabaseEngine>(phase.kind === "form" ? phase.draft.engine : (allEngines()[0]?.id as DatabaseEngine));
   const [showPassword, setShowPassword] = useState(false);
-  const engines = ENGINES.filter((engine) => engine.name.toLowerCase().includes(filter.trim().toLowerCase()));
+  const engines = engineOptions().filter((engine) => engine.name.toLowerCase().includes(filter.trim().toLowerCase()));
   const draft = phase.kind === "form" ? phase.draft : null;
-  const engine = ENGINES.find((item) => item.id === (draft?.engine ?? selected));
+  const engine = engineOptions().find((item) => item.id === (draft?.engine ?? selected));
 
   return (
     <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
@@ -551,7 +552,7 @@ function DetailsStep({
         <button type="button" className={section === "general" ? "active" : ""} onClick={() => setSection("general")}>
           {t("home.tab.general")}
         </button>
-        {draft.engine !== "sqlite" ? (
+        {!fileBased(draft.engine) ? (
           <>
             <button type="button" className={section === "ssl" ? "active" : ""} onClick={() => setSection("ssl")}>
               SSL
@@ -578,12 +579,12 @@ function DetailsStep({
                 ))}
               </datalist>
             </label>
-            {draft.engine === "sqlite" ? (
+            {fileBased(draft.engine) ? (
               <label className="span-2">
                 {t("home.form.file")}
                 <div className="password-input">
                   <input value={draft.database} placeholder={t("home.form.filePlaceholder")} onChange={(event) => patch({ database: event.target.value })} />
-                  <button type="button" aria-label={t("home.form.chooseFile")} onClick={() => pick("sqlite", (database) => patch({ database }))}>
+                  <button type="button" aria-label={t("home.form.chooseFile")} onClick={() => pick(draft.engine, (database) => patch({ database }))}>
                     <Folder size={16} />
                   </button>
                 </div>
@@ -624,7 +625,7 @@ function DetailsStep({
               </>
             )}
           </div>
-          {draft.engine !== "sqlite" ? (
+          {!fileBased(draft.engine) ? (
             <label className="check-row">
               <input type="checkbox" checked={draft.rememberPassword} onChange={(event) => patch({ rememberPassword: event.target.checked })} />
               {t("home.form.rememberPassword")}
@@ -642,7 +643,7 @@ function DetailsStep({
           <SafetyFields safety={draft.safety} onChange={(safety) => patch({ safety })} />
         </>
       ) : null}
-      {draft.engine !== "sqlite" && section === "ssl" ? (
+      {!fileBased(draft.engine) && section === "ssl" ? (
         <div className="form-grid">
           <label className="span-2">
             {t("home.form.sslMode")}
@@ -686,7 +687,7 @@ function DetailsStep({
           ) : null}
         </div>
       ) : null}
-      {draft.engine !== "sqlite" && section === "tunnel" ? (
+      {!fileBased(draft.engine) && section === "tunnel" ? (
         <>
           <label className="check-row">
             <input type="checkbox" checked={draft.sshEnabled} onChange={(event) => patch({ sshEnabled: event.target.checked })} />

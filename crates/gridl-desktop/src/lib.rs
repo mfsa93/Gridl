@@ -40,6 +40,9 @@ pub fn run() {
         })
         .setup(|app| {
             app.manage(state::AppState::new());
+            if let Some(main) = app.get_webview_window("main") {
+                windows::reveal_later(main);
+            }
             menu::install(app.handle())?;
             // gridl:// links, whether they start the app or reach it while it runs.
             use tauri_plugin_deep_link::DeepLinkExt;
@@ -53,24 +56,27 @@ pub fn run() {
         })
         .on_window_event(windows::on_window_event)
         .invoke_handler(tauri::generate_handler![
-            commands::connect,
-            commands::test_connection,
-            commands::disconnect,
-            commands::list_profiles,
-            commands::save_connection,
-            commands::create_group,
-            commands::delete_group,
-            commands::delete_profile,
-            commands::introspect,
-            commands::execute_query,
-            commands::cancel_query,
-            commands::execute_batch,
-            commands::check_sql,
-            commands::foreign_keys,
-            commands::write_export,
-            commands::set_unsaved,
-            commands::quit_discarding,
-            commands::close_discarding,
+            commands::catalog::list_engines,
+            commands::session::connect,
+            commands::session::test_connection,
+            commands::session::disconnect,
+            commands::profiles::list_profiles,
+            commands::profiles::save_connection,
+            commands::profiles::create_group,
+            commands::profiles::delete_group,
+            commands::profiles::delete_profile,
+            commands::catalog::introspect,
+            commands::catalog::describe_relation,
+            commands::catalog::table_objects,
+            commands::query::execute_query,
+            commands::query::cancel_query,
+            commands::query::execute_batch,
+            commands::catalog::check_sql,
+            commands::catalog::foreign_keys,
+            commands::export::write_export,
+            commands::window::set_unsaved,
+            commands::window::quit_discarding,
+            commands::window::close_discarding,
             windows::open_connection_window,
             windows::open_home_window,
             team::team_state,
@@ -78,9 +84,9 @@ pub fn run() {
             team::team_share,
             team::team_unshare,
             team::team_save_queries,
-            transfer::export_query,
-            transfer::preview_csv,
-            transfer::import_csv,
+            transfer::export::export_query,
+            transfer::import::preview_csv,
+            transfer::import::import_csv,
             backup::backup_database,
             backup::restore_database,
         ])

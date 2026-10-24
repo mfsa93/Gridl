@@ -1,12 +1,24 @@
+use std::path::Path;
+
 use async_trait::async_trait;
 
 use crate::error::CoreError;
 use crate::secret::SecretString;
+use crate::tr;
 use crate::types::ForeignKey;
 use crate::types::{
     BatchRequest, BatchResult, ConnectionConfig, ConnectionId, DatabaseEngine, QueryRequest,
     QueryResult, RelationRef, RowChunk, SqlCheck, TableSchema,
 };
+
+/// What a backup or restore needs to reach a session's database with the
+/// engine's own tools: the saved config, the local end of the SSH tunnel when
+/// the session goes through one, and the password.
+pub struct ToolAccess<'a> {
+    pub config: &'a ConnectionConfig,
+    pub endpoint: Option<(String, u16)>,
+    pub password: Option<&'a SecretString>,
+}
 
 /// Receives row blocks as the driver produces them.
 ///
@@ -55,6 +67,14 @@ pub trait DatabaseDriver: Send + Sync {
 
     async fn introspect(&self, id: &ConnectionId) -> Result<Vec<TableSchema>, CoreError>;
 
+    /// The indexes and triggers of one table, with `parent` set. Read again
+    /// after the table's structure changes, instead of the whole catalog.
+    async fn table_objects(
+        &self,
+        id: &ConnectionId,
+        table: &RelationRef,
+    ) -> Result<Vec<TableSchema>, CoreError>;
+
     /// Every foreign key in the schemas the catalog shows, columns in key order.
     async fn foreign_keys(&self, id: &ConnectionId) -> Result<Vec<ForeignKey>, CoreError>;
 
@@ -78,6 +98,36 @@ pub trait DatabaseDriver: Send + Sync {
         batch: &BatchRequest,
     ) -> Result<BatchResult, CoreError> {
         self.execute_batch_observed(id, batch, &|_| {}).await
+    }
+
+    /// Writes a full backup of the session's database to `out`. Engines
+    /// without a backup tool refuse.
+    async fn backup(
+        &self,
+        id: &ConnectionId,
+        access: &ToolAccess<'_>,
+        out: &Path,
+    ) -> Result<(), CoreError> {
+        let _ = (id, access, out);
+        Err(CoreError::Transfer(tr!(
+            "This engine has no backup tool.",
+            "Este motor no tiene herramienta de respaldo."
+        )))
+    }
+
+    /// Runs a backup written by [`DatabaseDriver::backup`] against the
+    /// session's database. Engines that cannot restore from the app refuse.
+    async fn restore(
+        &self,
+        id: &ConnectionId,
+        access: &ToolAccess<'_>,
+        input: &Path,
+    ) -> Result<(), CoreError> {
+        let _ = (id, access, input);
+        Err(CoreError::Transfer(tr!(
+            "This engine can't restore a backup from Gridl.",
+            "Este motor no puede restaurar un respaldo desde Gridl."
+        )))
     }
 
     /// [`DatabaseDriver::execute_batch`] that calls `progress` with the number

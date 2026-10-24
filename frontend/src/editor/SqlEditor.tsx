@@ -1,6 +1,7 @@
+import { engineSpec } from "../engines";
 import { autocompletion, completionKeymap } from "@codemirror/autocomplete";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
-import { MySQL, PostgreSQL, SQLite, sql } from "@codemirror/lang-sql";
+import { MSSQL, MySQL, PostgreSQL, sql, SQLite } from "@codemirror/lang-sql";
 import { forceLinting, lintGutter } from "@codemirror/lint";
 import { bracketMatching, HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
@@ -68,7 +69,7 @@ function appearanceExtension(scheme: ColorScheme) {
 
 function sqlExtension(engine: DatabaseEngine, schema: Record<string, string[]>) {
   return sql({
-    dialect: engine === "postgres" ? PostgreSQL : engine === "mysql" ? MySQL : SQLite,
+    dialect: { postgresql: PostgreSQL, mysql: MySQL, sqlite: SQLite, transactsql: MSSQL }[engineSpec(engine).sql.dialect],
     schema,
     upperCaseKeywords: true,
   });

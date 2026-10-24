@@ -25,6 +25,7 @@ pub enum DatabaseEngine {
     Sqlite,
     Postgres,
     Mysql,
+    Sqlserver,
 }
 
 /// Opaque id of an open session. Sessions are keyed by [`ConnectionConfig::id`].
@@ -115,7 +116,7 @@ pub struct ConnectionConfig {
     pub id: String,
     pub name: String,
     pub engine: DatabaseEngine,
-    /// Filesystem path for SQLite, database name for PostgreSQL and MySQL.
+    /// Filesystem path for SQLite, database name for the server engines.
     pub database: String,
     pub host: Option<String>,
     pub port: Option<u16>,
@@ -196,7 +197,7 @@ impl ConnectionConfig {
     }
 
     fn validate_security(&self) -> Result<(), CoreError> {
-        if !matches!(self.engine, DatabaseEngine::Postgres | DatabaseEngine::Mysql) {
+        if crate::engines::spec(self.engine).connection.file_based {
             return Ok(());
         }
         validate_path_opt(self.tls.root_cert.as_deref(), PathLabel::RootCert)?;
@@ -254,6 +255,16 @@ impl ConnectionConfig {
             validate_token(account, Token::CredentialAccount)?;
         }
         Ok(())
+    }
+
+    /// The server's host and port as saved, with the engine's default port
+    /// when none is set.
+    pub fn server(&self) -> (String, u16) {
+        let host = self.host.clone().unwrap_or_else(|| "localhost".into());
+        let port = self.port.unwrap_or_else(|| {
+            crate::engines::spec(self.engine).connection.default_port.unwrap_or(0)
+        });
+        (host, port)
     }
 
     pub fn connection_id(&self) -> Result<ConnectionId, CoreError> {
@@ -315,6 +326,9 @@ pub struct TableSchema {
     /// Result type of a function, such as `numeric` or `TABLE(id integer)`.
     #[serde(default)]
     pub returns: Option<String>,
+    /// The table an index or trigger belongs to, in the same schema.
+    #[serde(default)]
+    pub parent: Option<String>,
 }
 
 /// One IPC block of a streaming query.
@@ -391,6 +405,11 @@ impl QueryRequest {
             )));
         }
         Ok(Self { query_id, sql, params, chunk_rows, max_rows, cancel, browse: false })
+    }
+
+    /// The user (or the time limit) asked to stop this query.
+    pub fn cancelled(&self) -> bool {
+        self.cancel.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// A query whose rows go to a file instead of the grid. It has no row cap,

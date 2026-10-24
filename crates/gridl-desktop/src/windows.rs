@@ -159,9 +159,25 @@ pub fn open_link(app: &AppHandle, url: &tauri::Url) {
         build_window(app, &label, format!("index.html#link={}", encode_component(url.as_str())));
 }
 
+/// Windows open hidden and the page shows them once its splash has painted
+/// (`frontend/src/boot.ts`), so nothing empty flashes on screen. If the page
+/// never gets that far, the window is shown anyway after this long.
+const REVEAL_FALLBACK: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// Shows `window` after [`REVEAL_FALLBACK`] in case its page could not.
+pub fn reveal_later<R: tauri::Runtime>(window: tauri::WebviewWindow<R>) {
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(REVEAL_FALLBACK).await;
+        if !window.is_visible().unwrap_or(true) {
+            let _ = window.show();
+        }
+    });
+}
+
 fn build_window(app: &AppHandle, label: &str, url: String) -> Result<(), String> {
     let builder = WebviewWindowBuilder::new(app, label, WebviewUrl::App(url.into()))
         .title("Gridl")
+        .visible(false)
         .inner_size(1440.0, 900.0)
         .min_inner_size(960.0, 640.0);
     #[cfg(target_os = "macos")]
@@ -176,7 +192,9 @@ fn build_window(app: &AppHandle, label: &str, url: String) -> Result<(), String>
                 .state(tauri::window::EffectState::FollowsWindowActiveState)
                 .build(),
         );
-    builder.build().map(|_| ()).map_err(|err| err.to_string())
+    let window = builder.build().map_err(|err| err.to_string())?;
+    reveal_later(window);
+    Ok(())
 }
 
 /// Window events: ask before closing a window with unsaved edits, and close
@@ -206,7 +224,7 @@ pub fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
                 for id in owned {
                     // Another window may have claimed it in the meantime.
                     if state.owner(&id).is_none() {
-                        crate::commands::close_session(&state, &id).await;
+                        crate::commands::session::close_session(&state, &id).await;
                     }
                 }
             });

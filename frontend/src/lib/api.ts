@@ -1,13 +1,15 @@
+import { engineSpec, type EngineSpec } from "../engines";
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen, type EventCallback, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { CodedError } from "./errors";
 import { t } from "./i18n";
 
-export type DatabaseEngine = "sqlite" | "postgres" | "mysql";
+export type DatabaseEngine = "sqlite" | "postgres" | "mysql" | "sqlserver";
 export type TlsMode = "prefer" | "disable" | "require" | "verify-ca" | "verify-full";
 export type SshAuth = "password" | "key";
-export type BrowseKind = "sqlite" | "certificate" | "key";
+/** A TLS file, or the database file of a file-based engine. */
+export type BrowseKind = "certificate" | "key" | DatabaseEngine;
 
 export type TlsSettings = {
   mode: TlsMode;
@@ -56,6 +58,8 @@ export type TableSchema = {
   definition: string | null;
   /** Result type of a function, such as `numeric` or `TABLE(id integer)`. */
   returns?: string | null;
+  /** The table an index or trigger belongs to, in the same schema. */
+  parent?: string | null;
 };
 
 export type Environment = "local" | "development" | "staging" | "production";
@@ -203,9 +207,9 @@ export function formatSqlValue(value: SqlValue | undefined): string {
 
 let identifierQuote = '"';
 
-/** Picks the identifier quote for the open connection. MySQL uses backticks. */
+/** Picks the identifier quote of the open connection's engine. */
 export function setDialect(engine: DatabaseEngine) {
-  identifierQuote = engine === "mysql" ? "`" : '"';
+  identifierQuote = engineSpec(engine).sql.identifierQuote;
 }
 
 export function quoteIdent(value: string): string {
@@ -235,6 +239,8 @@ export type ConnectRequest = {
   sshSecret: string | null;
   rememberSshSecret: boolean;
   trustSshHost: boolean;
+  /** Open the session without reading the schema; the caller introspects afterwards. */
+  deferSchema?: boolean;
 };
 
 export function saveConnection(request: ConnectRequest): Promise<ConnectionCatalog> {
@@ -263,6 +269,16 @@ export function testConnection(request: ConnectRequest): Promise<TestResult> {
 
 export function disconnect(connectionId: string): Promise<void> {
   return invoke("disconnect", { connectionId });
+}
+
+/** One relation's columns, read again after a change to its structure. */
+export function describeRelation(connectionId: string, relation: { schema: string | null; name: string; kind: RelationKind }): Promise<TableSchema> {
+  return invoke("describe_relation", { connectionId, relation });
+}
+
+/** The indexes and triggers of one table, each with `parent` set to it. */
+export function tableObjects(connectionId: string, relation: { schema: string | null; name: string; kind: RelationKind }): Promise<TableSchema[]> {
+  return invoke("table_objects", { connectionId, relation });
 }
 
 export function introspect(connectionId: string): Promise<TableSchema[]> {
@@ -429,4 +445,9 @@ export function teamUnshare(connectionId: string): Promise<TeamState> {
 
 export function teamSaveQueries(connectionId: string, queries: TeamQuery[]): Promise<TeamState> {
   return invoke("team_save_queries", { connectionId, queries });
+}
+
+/** The engines the backend can open, described by their specs. */
+export function listEngines(): Promise<EngineSpec[]> {
+  return invoke("list_engines");
 }

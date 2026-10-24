@@ -1,3 +1,4 @@
+import { engineSpec } from "../engines";
 import { quoteIdent, type DatabaseEngine, type TableSchema } from "../lib/api";
 import { t } from "../lib/i18n";
 import { textLiteral } from "./export";
@@ -63,9 +64,10 @@ function likePattern(value: string, engine: DatabaseEngine, before: boolean, aft
 
 function likeClause(column: string, engine: DatabaseEngine, pattern: string, negate: boolean): string {
   const not = negate ? "not " : "";
-  // MySQL already escapes with backslash; the others need it spelled out.
-  if (engine === "postgres") return `cast(${column} as text) ${not}ilike ${pattern} escape '\\'`;
-  if (engine === "sqlite") return `${column} ${not}like ${pattern} escape '\\'`;
+  const style = engineSpec(engine).sql.contains;
+  if (style === "ilike-text") return `cast(${column} as text) ${not}ilike ${pattern} escape '\\'`;
+  if (style === "like-escape") return `${column} ${not}like ${pattern} escape '\\'`;
+  // Engines that read backslash as an escape already have it.
   return `${column} ${not}like ${pattern}`;
 }
 
@@ -116,6 +118,17 @@ export function orderClause(table: TableSchema, sort: TableSort | null): string 
   const keys = table.columns.filter((column) => column.primaryKey);
   if (keys.length === 0) return "";
   return ` order by ${keys.map((column) => quoteIdent(column.name)).join(", ")}`;
+}
+
+/**
+ * The page clause after `order` (as `orderClause` writes it). OFFSET … FETCH
+ * needs an ORDER BY, so an unordered page orders by nothing in particular.
+ */
+export function pageClause(engine: DatabaseEngine, order: string, size: number, offset: number): string {
+  if (engineSpec(engine).sql.paging === "offset-fetch") {
+    return `${order || " order by (select null)"} offset ${offset} rows fetch next ${size} rows only`;
+  }
+  return `${order} limit ${size} offset ${offset}`;
 }
 
 export function nextSort(current: TableSort | null, column: string): TableSort | null {

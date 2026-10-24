@@ -19,7 +19,10 @@ serde_json.workspace = true
 sqlx.workspace = true
 sys-locale = "0.3"
 thiserror.workspace = true
-tokio = { workspace = true, features = ["sync", "time"] }
+# SQL Server: sqlx dropped its driver, tiberius speaks TDS natively.
+tiberius = { version = "0.13", default-features = false, features = ["tds73", "rustls", "chrono"] }
+tokio = { workspace = true, features = ["sync", "time", "net", "process"] }
+tokio-util = { version = "0.7", features = ["compat"] }
 uuid.workspace = true
 zeroize.workspace = true
 

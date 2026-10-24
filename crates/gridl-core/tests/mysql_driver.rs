@@ -15,8 +15,9 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use gridl_core::{
     BatchRequest, BatchStatement, ChunkSink, ConnectionConfig, ConnectionId, CoreError,
-    DatabaseDriver, DatabaseEngine, MysqlDriver, QueryRequest, QueryResult, RelationKind, RowChunk,
-    SecretString, SqlValue, TableSchema, DEFAULT_CHUNK_ROWS, MAX_STREAM_ROWS,
+    DatabaseDriver, DatabaseEngine, MysqlDriver, QueryRequest, QueryResult, RelationKind,
+    RelationRef, RowChunk, SecretString, SqlValue, TableSchema, DEFAULT_CHUNK_ROWS,
+    MAX_STREAM_ROWS,
 };
 
 struct VecSink(Vec<RowChunk>);
@@ -753,5 +754,29 @@ async fn mysql_text_parameters_match_numeric_columns() {
     let rows: Vec<_> = sink.0.into_iter().flat_map(|chunk| chunk.rows).collect();
     assert_eq!(rows, vec![vec![SqlValue::Text("six".into())]]);
     run(&driver, &id, "DROP TABLE gridl_params").await;
+    driver.disconnect(&id).await.expect("disconnect");
+}
+
+#[tokio::test]
+async fn mysql_reads_one_tables_indexes_and_triggers() {
+    let Some(target) = target() else { return };
+    let (driver, id) = open(&target, "mysql-table-objects", false).await;
+    for sql in [
+        "DROP TABLE IF EXISTS gt_item",
+        "DROP TABLE IF EXISTS gt_other",
+        "CREATE TABLE gt_item (id INT PRIMARY KEY, name VARCHAR(20), KEY gt_item_name (name))",
+        "CREATE TABLE gt_other (id INT PRIMARY KEY)",
+        "CREATE TRIGGER gt_item_touch BEFORE UPDATE ON gt_item FOR EACH ROW SET NEW.name = NEW.name",
+    ] {
+        run(&driver, &id, sql).await;
+    }
+    let item = RelationRef { schema: None, name: "gt_item".into(), kind: RelationKind::Table };
+    let objects = driver.table_objects(&id, &item).await.expect("objects");
+    let mut names: Vec<_> = objects.iter().map(|object| object.name.as_str()).collect();
+    names.sort_unstable();
+    assert_eq!(names, vec!["gt_item.PRIMARY", "gt_item.gt_item_name", "gt_item_touch"]);
+    assert!(objects.iter().all(|object| object.parent.as_deref() == Some("gt_item")));
+    run(&driver, &id, "DROP TABLE gt_item").await;
+    run(&driver, &id, "DROP TABLE gt_other").await;
     driver.disconnect(&id).await.expect("disconnect");
 }

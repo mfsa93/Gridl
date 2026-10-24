@@ -3,6 +3,8 @@ updates:
   - package-ecosystem: cargo
     directory: /
     target-branch: develop
+    # Rebasing on every push to develop re-ran CI on each open update; rebase on request instead.
+    rebase-strategy: disabled
     schedule:
       interval: weekly
     groups:
@@ -11,6 +13,7 @@ updates:
   - package-ecosystem: npm
     directory: /
     target-branch: develop
+    rebase-strategy: disabled
     schedule:
       interval: weekly
     ignore:
@@ -23,5 +26,6 @@ updates:
   - package-ecosystem: github-actions
     directory: /
     target-branch: develop
+    rebase-strategy: disabled
     schedule:
       interval: monthly

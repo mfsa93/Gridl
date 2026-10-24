@@ -1,6 +1,6 @@
 # Gridl
 
-A desktop database client that looks and feels like a macOS app. It works with **PostgreSQL**, **MySQL / MariaDB**, and **SQLite**. The UI runs on Tauri 2 and the data engine is a standalone Rust crate, with no Electron: the app weighs about 20 MB and uses a fraction of the memory of Electron or Java based clients.
+A desktop database client that looks and feels like a macOS app. It works with **PostgreSQL**, **MySQL / MariaDB**, **SQLite**, and **SQL Server / Azure SQL**. The UI runs on Tauri 2 and the data engine is a standalone Rust crate, with no Electron: the app weighs about 20 MB and uses a fraction of the memory of Electron or Java based clients.
 
 Gridl is available in English and Spanish and follows the system language.
 
@@ -61,7 +61,7 @@ The **Backup** menu uses each engine's command line tools. For PostgreSQL and My
 brew install libpq mysql-client
 ```
 
-SQLite needs nothing extra.
+SQLite needs nothing extra. SQL Server backups are written on the server itself (`BACKUP DATABASE`), so the menu is off for it.
 
 ### Uninstall
 
@@ -256,10 +256,10 @@ frontend/                  React, CodeMirror 6, Glide Data Grid
 crates/gridl-desktop/      Tauri shell: IPC commands, windows, profiles, keychain,
         |                  safety policy, export, import, and backup
         |  DatabaseDriver, CredentialVault
-crates/gridl-core/         ports and drivers (SQLite, PostgreSQL, MySQL/MariaDB)
+crates/gridl-core/         ports and drivers (SQLite, PostgreSQL, MySQL/MariaDB, SQL Server)
 ```
 
-`DatabaseDriver` is the port; `SqliteDriver`, `PostgresDriver`, and `MysqlDriver` are the adapters. The shell does not speak SQL: it opens a session, asks for the catalog, and consumes row chunks. Passwords are not part of `ConnectionConfig`; they are stored with the `keyring` crate (Keychain, Credential Manager, or Secret Service).
+`DatabaseDriver` is the port; `SqliteDriver`, `PostgresDriver`, `MysqlDriver`, and `SqlserverDriver` are the adapters, registered in `builtin_drivers()`. Each adapter is a folder split by responsibility (`connect`, `catalog`, `query`), and what they share (sessions, cancellation, chunk streaming, results) lives once in `drivers/common/`. Each engine's differences live in its `EngineSpec`, which the frontend reads through `list_engines`. The shell does not speak SQL: it opens a session, asks for the catalog, and consumes row chunks. Passwords are not part of `ConnectionConfig`; they are stored with the `keyring` crate (Keychain, Credential Manager, or Secret Service).
 
 - **Streaming**: queries are never materialized whole. The driver pushes 500-row `RowChunk`s through a Tauri `Channel` and the grid virtualizes rendering. Caps: 1,000,000 rows per result and 256 KiB per cell.
 - **Editor session**: each connection keeps a pinned connection for the editor, so transactions span several queries. Inline error checking uses another pool connection, so it never aborts an open transaction.
@@ -273,8 +273,9 @@ crates/gridl-core/         ports and drivers (SQLite, PostgreSQL, MySQL/MariaDB)
 ```text
 Cargo.toml                          workspace
 crates/gridl-core/                  DatabaseDriver, types, drivers, safety policy, export and import
-crates/gridl-core/tests/            per-engine tests (PG and MySQL against a real server)
-crates/gridl-desktop/               Tauri app: commands, windows, menu, SSH tunnel, backup
+crates/gridl-core/tests/            per-engine tests (PG, MySQL and SQL Server against a real server)
+crates/gridl-desktop/src/commands/  IPC commands by area: profiles, session, catalog, query, guard
+crates/gridl-desktop/src/           windows, menu, SSH tunnel, team space, transfer/, backup/
 crates/gridl-desktop/icons/         icons (source.svg is the original)
 frontend/src/App.tsx                workspace
 frontend/src/workspace/             model, grid, structure, relations, export, import
@@ -287,11 +288,14 @@ install.sh                          macOS installer
 
 ### Adding an engine
 
-1. Implement `DatabaseDriver` in `crates/gridl-core`.
-2. Register the new `DatabaseEngine` value in the shell (`AppState::driver`).
-3. Do not accumulate the result: call `ChunkSink::on_chunk` for each chunk.
-4. Use a pinned connection per session for `query` and a pool transaction for `execute_batch`.
+An engine is a driver (`DatabaseDriver`) and a spec (`EngineSpec` in `crates/gridl-core/src/engines.rs`) that describes how it differs: connection defaults, SQL dialect, column types, capabilities. The rest of the app reads the spec instead of branching on engine names. Step by step: [docs/adding-an-engine.md](docs/adding-an-engine.md).
 
 ## License
 
-[MIT](LICENSE).
+Copyright © 2026 Michael Sanchez.
+
+Gridl is free software: you can redistribute it and/or modify it under the terms of the [GNU General Public License](LICENSE) as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version. It is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+
+In short: you may use Gridl for anything, at home or at work, and share or sell copies, as long as every copy, changed or not, keeps the copyright notice and the license, and comes with its source code under the same terms. Changed versions must say they were changed.
+
+Versions before 0.5.0 were published under the MIT license.

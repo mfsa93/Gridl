@@ -462,3 +462,37 @@ async fn sqlite_text_parameters_match_numeric_columns() {
     let rows: Vec<_> = sink.0.into_iter().flat_map(|chunk| chunk.rows).collect();
     assert_eq!(rows, vec![vec![SqlValue::Text("five".into())]]);
 }
+
+#[tokio::test]
+async fn sqlite_reads_one_tables_indexes_and_triggers() {
+    let file = TempDb::new();
+    let driver = SqliteDriver::new();
+    let connection = config(&file.path);
+    driver.connect(&connection, None, None).await.expect("connect");
+    let id = connection.connection_id().expect("id");
+    for sql in [
+        "CREATE TABLE item (id INTEGER PRIMARY KEY, name TEXT UNIQUE)",
+        "CREATE TABLE other (id INTEGER PRIMARY KEY)",
+        "CREATE INDEX item_name ON item (name)",
+        "CREATE INDEX other_id ON other (id)",
+        "CREATE TRIGGER item_touch AFTER UPDATE ON item BEGIN SELECT 1; END",
+    ] {
+        run(&driver, &id, sql).await;
+    }
+    let item = gridl_core::RelationRef {
+        schema: None,
+        name: "item".into(),
+        kind: gridl_core::RelationKind::Table,
+    };
+    let mut names: Vec<_> = driver
+        .table_objects(&id, &item)
+        .await
+        .expect("objects")
+        .into_iter()
+        .inspect(|object| assert_eq!(object.parent.as_deref(), Some("item")))
+        .map(|object| object.name)
+        .collect();
+    names.sort();
+    assert_eq!(names, vec!["item_name", "item_touch"]);
+    driver.disconnect(&id).await.expect("disconnect");
+}

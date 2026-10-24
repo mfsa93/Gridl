@@ -2,6 +2,8 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import "@glideapps/glide-data-grid/dist/index.css";
 import { App } from "./App";
+import { setEngines } from "./engines";
+import { listEngines } from "./lib/api";
 import { locale, t } from "./lib/i18n";
 import "./styles.css";
 
@@ -27,6 +29,10 @@ const root = document.getElementById("root");
 if (!root) {
   throw new Error(t("error.noRoot"));
 }
+
+// The window paints at once with the built-in engines; the backend's list
+// (the same today, plugins later) replaces it when it arrives.
+void listEngines().then(setEngines).catch(() => undefined);
 
 createRoot(root).render(
   <StrictMode>

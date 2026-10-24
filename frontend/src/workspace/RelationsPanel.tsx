@@ -1,3 +1,4 @@
+import { engineSpec } from "../engines";
 import { ArrowUpRight, Minus, Plus } from "lucide-react";
 import { useState } from "react";
 import type { DatabaseEngine, ForeignKey, TableSchema } from "../lib/api";
@@ -55,7 +56,7 @@ export function RelationsPanel({
   const outgoing = outgoingKeys(keys, table);
   const incoming = incomingKeys(keys, table);
   const targets = tables.filter((item) => item.kind === "table");
-  const canAlter = editable && engine !== "sqlite";
+  const canAlter = editable && engineSpec(engine).structure.alterForeignKeys;
   const [draft, setDraft] = useState<Draft | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const target = draft ? targets.find((item) => tableKey(item) === draft.target) : undefined;
@@ -95,7 +96,7 @@ export function RelationsPanel({
     <section className="relations-panel">
       <div className="relations-title">
         <span>{t("relationsPanel.title")}</span>
-        {engine === "sqlite" && editable ? <small>{t("relationsPanel.sqliteNote")}</small> : null}
+        {!engineSpec(engine).structure.alterForeignKeys && editable ? <small>{t("relationsPanel.createOnlyNote", { engine: engineSpec(engine).name })}</small> : null}
       </div>
       <div className="relation-group">
         <div className="relation-head">

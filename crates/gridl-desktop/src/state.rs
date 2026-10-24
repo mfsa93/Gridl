@@ -3,8 +3,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, RwLock};
 
 use gridl_core::{
-    ConnectionConfig, ConnectionId, CoreError, DatabaseDriver, DatabaseEngine, MysqlDriver,
-    PostgresDriver, SafetySettings, SqliteDriver,
+    ConnectionConfig, ConnectionId, CoreError, DatabaseDriver, DatabaseEngine, SafetySettings,
 };
 
 use crate::tunnel::SshTunnel;
@@ -13,8 +12,8 @@ use crate::vault::KeyringVault;
 pub const KEYRING_SERVICE: &str = "app.gridl.desktop";
 
 /// One open session: the config it was opened with and, when it goes through
-/// an SSH tunnel, the local end of that tunnel, so external tools such as
-/// `pg_dump` can reach the same server.
+/// an SSH tunnel, the local end of that tunnel, so the engine's backup tools
+/// can reach the same server.
 #[derive(Debug, Clone)]
 pub struct Session {
     pub config: ConnectionConfig,
@@ -23,9 +22,8 @@ pub struct Session {
 
 /// Process-wide sessions, cancellation flags, and the credential adapter.
 pub struct AppState {
-    sqlite: SqliteDriver,
-    postgres: PostgresDriver,
-    mysql: MysqlDriver,
+    /// One driver per engine, from `gridl_core::builtin_drivers`.
+    drivers: Vec<Box<dyn DatabaseDriver>>,
     sessions: RwLock<HashMap<String, Session>>,
     tunnels: Mutex<HashMap<String, SshTunnel>>,
     cancels: Mutex<HashMap<String, Arc<AtomicBool>>>,
@@ -40,9 +38,7 @@ pub struct AppState {
 impl AppState {
     pub fn new() -> Self {
         Self {
-            sqlite: SqliteDriver::new(),
-            postgres: PostgresDriver::new(),
-            mysql: MysqlDriver::new(),
+            drivers: gridl_core::builtin_drivers(),
             sessions: RwLock::new(HashMap::new()),
             tunnels: Mutex::new(HashMap::new()),
             cancels: Mutex::new(HashMap::new()),
@@ -54,11 +50,27 @@ impl AppState {
     }
 
     pub fn driver(&self, engine: DatabaseEngine) -> &dyn DatabaseDriver {
-        match engine {
-            DatabaseEngine::Sqlite => &self.sqlite,
-            DatabaseEngine::Postgres => &self.postgres,
-            DatabaseEngine::Mysql => &self.mysql,
-        }
+        self.drivers
+            .iter()
+            .find(|driver| driver.engine() == engine)
+            .map(Box::as_ref)
+            .expect("every engine has a driver in gridl_core::builtin_drivers")
+    }
+
+    /// The id and driver of an open session, for a command that acts on it.
+    pub fn open_session(
+        &self,
+        connection_id: String,
+    ) -> Result<(ConnectionId, &dyn DatabaseDriver), CoreError> {
+        let id = ConnectionId::new(connection_id)?;
+        let engine = self.engine(id.as_str())?;
+        Ok((id, self.driver(engine)))
+    }
+
+    /// Drops the bookkeeping and the SSH tunnel of a session the driver closed.
+    pub fn forget(&self, id: &ConnectionId) {
+        self.untrack(id);
+        self.drop_tunnel(id.as_str());
     }
 
     pub fn track(
