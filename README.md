@@ -292,8 +292,6 @@ An engine is a driver (`DatabaseDriver`) and a spec (`EngineSpec` in `crates/gri
 
 ## License
 
-[PolyForm Noncommercial 1.0.0](LICENSE). You may use, copy, change and share Gridl for any noncommercial purpose: personal use, study, research, hobby projects, and use by charities, schools and public bodies. Anyone you pass it on to must get the license and this notice:
+[MIT with the Commons Clause](LICENSE). You may use, copy, change and share Gridl, at home or at work, as long as the copyright notice and the license go with every copy. What you may not do is sell it: offer Gridl, or a product or service whose value comes mainly from it (hosting and paid support included), for a fee.
 
-> Required Notice: Copyright (c) 2026 Michael Sanchez (https://github.com/mfsa93/Gridl)
-
-Commercial use, including inside a company or as part of a paid product or service, needs a separate license; open an issue to ask for one. Versions released before 0.5.0 stay under the MIT license they were published with.
+Versions before 0.5.0 were published under the plain MIT license.
