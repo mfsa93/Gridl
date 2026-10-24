@@ -4,7 +4,7 @@ use futures_util::TryStreamExt;
 
 use crate::driver::ChunkSink;
 use crate::error::CoreError;
-use crate::types::{ColumnDefinition, RowChunk};
+use crate::types::{ColumnDefinition, QueryRequest, RowChunk};
 use crate::value::SqlValue;
 
 pub(crate) struct StreamOutcome {
@@ -21,7 +21,20 @@ pub(crate) struct StreamConfig<'a> {
     pub cancel: &'a std::sync::atomic::AtomicBool,
 }
 
-/// Pull a sqlx stream into fixed-size chunks. The first chunk carries columns.
+impl<'a> StreamConfig<'a> {
+    /// Chunk size, row limit and cancel flag from `request`.
+    pub(crate) fn new(request: &'a QueryRequest, columns: &'a [ColumnDefinition]) -> Self {
+        Self {
+            query_id: &request.query_id,
+            columns,
+            chunk_rows: request.chunk_rows,
+            max_rows: request.max_rows,
+            cancel: &request.cancel,
+        }
+    }
+}
+
+/// Pull a row stream into fixed-size chunks. The first chunk carries columns.
 pub(crate) async fn emit_chunks<R, S, F>(
     mut stream: S,
     config: StreamConfig<'_>,
@@ -29,7 +42,7 @@ pub(crate) async fn emit_chunks<R, S, F>(
     sink: &mut dyn ChunkSink,
 ) -> Result<StreamOutcome, CoreError>
 where
-    S: futures_util::Stream<Item = Result<R, sqlx::Error>> + Unpin,
+    S: futures_util::Stream<Item = Result<R, CoreError>> + Unpin,
     F: FnMut(&R) -> Vec<SqlValue>,
 {
     let mut buffer = Vec::with_capacity(config.chunk_rows);
@@ -42,7 +55,7 @@ where
             return Ok(StreamOutcome { row_count, cancelled: true, truncated: false });
         }
 
-        match stream.try_next().await.map_err(super::db_err)? {
+        match stream.try_next().await? {
             Some(row) => {
                 if row_count == config.max_rows {
                     emit(sink, &config, index, buffer, true).await?;

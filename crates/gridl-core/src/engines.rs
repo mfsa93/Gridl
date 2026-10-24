@@ -75,6 +75,30 @@ pub struct SqlSpec {
     pub now: [&'static str; 3],
     /// OUT parameters of a procedure call are passed as session variables (MySQL).
     pub out_param_variables: bool,
+    /// Text literals are written N'…' so they keep characters outside the code page (SQL Server).
+    pub national_text: bool,
+    /// How a page of rows is asked for.
+    pub paging: Paging,
+    /// How a procedure is called.
+    pub procedure_call: ProcedureCall,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Paging {
+    /// `LIMIT n OFFSET m`
+    LimitOffset,
+    /// `ORDER BY … OFFSET m ROWS FETCH NEXT n ROWS ONLY`
+    OffsetFetch,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProcedureCall {
+    /// `CALL p(a, b)`
+    Call,
+    /// `EXEC p @a = …, @b = … OUTPUT`
+    Exec,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -90,6 +114,7 @@ pub enum SqlDialect {
     Postgresql,
     Mysql,
     Sqlite,
+    Transactsql,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -101,6 +126,8 @@ pub enum NullSafeDiffers {
     NotNullSafeEquals,
     /// `a IS NOT b`
     IsNot,
+    /// `EXISTS (SELECT a EXCEPT SELECT b)`, for servers without IS DISTINCT FROM
+    ExistsExcept,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -130,6 +157,8 @@ pub enum BytesLiteral {
     EscapedHex,
     /// X'CAFE'
     XHex,
+    /// 0xCAFE
+    PrefixedHex,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -157,6 +186,10 @@ pub struct StructureSpec {
     pub alter_foreign_keys: bool,
     /// Words that drop a foreign key: "drop constraint" or "drop foreign key".
     pub drop_foreign_key: &'static str,
+    /// Lists the user's schemas, one name per row (engines with schemas).
+    pub list_schemas: Option<&'static str>,
+    /// A schema can be renamed.
+    pub rename_schemas: bool,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -165,6 +198,7 @@ pub enum DdlStyle {
     Postgres,
     Mysql,
     Sqlite,
+    Sqlserver,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -211,6 +245,7 @@ pub enum ExplainStyle {
 pub enum RowEstimate {
     PgClass,
     InformationSchema,
+    SysPartitions,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -240,12 +275,13 @@ pub fn spec(engine: DatabaseEngine) -> EngineSpec {
         DatabaseEngine::Postgres => postgres(),
         DatabaseEngine::Mysql => mysql(),
         DatabaseEngine::Sqlite => sqlite(),
+        DatabaseEngine::Sqlserver => sqlserver(),
     }
 }
 
 /// Every engine built into this app, in the order the app offers them.
 pub fn builtin_specs() -> Vec<EngineSpec> {
-    vec![postgres(), mysql(), sqlite()]
+    vec![postgres(), mysql(), sqlite(), sqlserver()]
 }
 
 fn postgres() -> EngineSpec {
@@ -277,6 +313,9 @@ fn postgres() -> EngineSpec {
             empty_insert: "default values",
             now: ["current_date", "current_time", "now()"],
             out_param_variables: false,
+            national_text: false,
+            paging: Paging::LimitOffset,
+            procedure_call: ProcedureCall::Call,
         },
         structure: StructureSpec {
             schemas: true,
@@ -317,6 +356,14 @@ fn postgres() -> EngineSpec {
             unique_on_add: true,
             alter_foreign_keys: true,
             drop_foreign_key: "drop constraint",
+            list_schemas: Some(
+                "select schema_name
+from information_schema.schemata
+where schema_name not in ('pg_catalog', 'information_schema')
+  and schema_name not like 'pg\\_%' escape '\\'
+order by schema_name",
+            ),
+            rename_schemas: true,
         },
         tools: ToolSpec {
             explain: Some(ExplainStyle::PostgresJson),
@@ -356,6 +403,9 @@ fn mysql() -> EngineSpec {
             empty_insert: "() values ()",
             now: ["current_date", "current_time", "now()"],
             out_param_variables: true,
+            national_text: false,
+            paging: Paging::LimitOffset,
+            procedure_call: ProcedureCall::Call,
         },
         structure: StructureSpec {
             schemas: false,
@@ -392,6 +442,8 @@ fn mysql() -> EngineSpec {
             unique_on_add: true,
             alter_foreign_keys: true,
             drop_foreign_key: "drop foreign key",
+            list_schemas: None,
+            rename_schemas: false,
         },
         tools: ToolSpec {
             explain: Some(ExplainStyle::MysqlJson),
@@ -431,6 +483,9 @@ fn sqlite() -> EngineSpec {
             empty_insert: "default values",
             now: ["date('now')", "time('now')", "datetime('now')"],
             out_param_variables: false,
+            national_text: false,
+            paging: Paging::LimitOffset,
+            procedure_call: ProcedureCall::Call,
         },
         structure: StructureSpec {
             schemas: false,
@@ -450,11 +505,106 @@ fn sqlite() -> EngineSpec {
             unique_on_add: false,
             alter_foreign_keys: false,
             drop_foreign_key: "drop constraint",
+            list_schemas: None,
+            rename_schemas: false,
         },
         tools: ToolSpec {
             explain: Some(ExplainStyle::SqliteQueryPlan),
             row_estimate: None,
             backup: Some(BackupTool::VacuumInto),
+            restore: false,
+        },
+    }
+}
+
+fn sqlserver() -> EngineSpec {
+    EngineSpec {
+        id: "sqlserver",
+        name: "SQL Server",
+        short: "Ms",
+        color: "#ef4444",
+        connection: ConnectionSpec {
+            file_based: false,
+            default_port: Some(1433),
+            default_user: Some("sa"),
+            default_name: "SQL Server",
+            file_extensions: Vec::new(),
+        },
+        sql: SqlSpec {
+            // The driver turns QUOTED_IDENTIFIER on, so "x" works like [x].
+            identifier_quote: '"',
+            // The driver numbers them @P1, @P2… for the server.
+            params: ParamStyle::Question,
+            param_casts: false,
+            dialect: SqlDialect::Transactsql,
+            backslash_escapes: false,
+            hash_comments: false,
+            dollar_quotes: false,
+            text_cast: "NVARCHAR(MAX)",
+            null_safe_differs: NullSafeDiffers::ExistsExcept,
+            contains: ContainsMatch::LikeEscape,
+            booleans: BooleanLiteral::Number,
+            bytes: BytesLiteral::PrefixedHex,
+            empty_insert: "default values",
+            now: ["cast(sysdatetime() as date)", "cast(sysdatetime() as time)", "sysdatetime()"],
+            out_param_variables: false,
+            national_text: true,
+            paging: Paging::OffsetFetch,
+            procedure_call: ProcedureCall::Exec,
+        },
+        structure: StructureSpec {
+            schemas: true,
+            ddl: DdlStyle::Sqlserver,
+            column_types: vec![
+                length("nvarchar"),
+                plain("nvarchar(max)"),
+                length("varchar"),
+                plain("varchar(max)"),
+                length("nchar"),
+                length("char"),
+                plain("tinyint"),
+                plain("smallint"),
+                plain("int"),
+                plain("bigint"),
+                generated("int identity"),
+                generated("bigint identity"),
+                plain("bit"),
+                numeric("decimal"),
+                plain("money"),
+                plain("real"),
+                plain("float"),
+                plain("date"),
+                plain("time"),
+                plain("datetime2"),
+                plain("datetimeoffset"),
+                plain("datetime"),
+                plain("uniqueidentifier"),
+                length("varbinary"),
+                plain("varbinary(max)"),
+                plain("xml"),
+            ],
+            key_type: "int identity",
+            // Without a length nvarchar holds one character.
+            length_hint: Some("255"),
+            reference_rules: vec![("^int( identity)?$", "int"), ("^bigint( identity)?$", "bigint")],
+            reference_fallback: None,
+            alter_columns: true,
+            unique_on_add: true,
+            alter_foreign_keys: true,
+            drop_foreign_key: "drop constraint",
+            // Role schemas (db_owner…) have ids from 16384.
+            list_schemas: Some(
+                "select name from sys.schemas
+where schema_id < 16384 and name not in ('sys', 'INFORMATION_SCHEMA', 'guest')
+order by name",
+            ),
+            rename_schemas: false,
+        },
+        tools: ToolSpec {
+            explain: None,
+            row_estimate: Some(RowEstimate::SysPartitions),
+            // BACKUP DATABASE writes on the server's disk, not the user's.
+            backup: None,
             restore: false,
         },
     }
@@ -480,7 +630,12 @@ mod tests {
 
     #[test]
     fn every_engine_has_its_spec() {
-        for engine in [DatabaseEngine::Postgres, DatabaseEngine::Mysql, DatabaseEngine::Sqlite] {
+        for engine in [
+            DatabaseEngine::Postgres,
+            DatabaseEngine::Mysql,
+            DatabaseEngine::Sqlite,
+            DatabaseEngine::Sqlserver,
+        ] {
             let id = serde_json::to_value(engine).expect("engine id");
             assert_eq!(id, spec(engine).id);
         }

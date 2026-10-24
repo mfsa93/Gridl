@@ -120,6 +120,17 @@ export function orderClause(table: TableSchema, sort: TableSort | null): string 
   return ` order by ${keys.map((column) => quoteIdent(column.name)).join(", ")}`;
 }
 
+/**
+ * The page clause after `order` (as `orderClause` writes it). OFFSET … FETCH
+ * needs an ORDER BY, so an unordered page orders by nothing in particular.
+ */
+export function pageClause(engine: DatabaseEngine, order: string, size: number, offset: number): string {
+  if (engineSpec(engine).sql.paging === "offset-fetch") {
+    return `${order || " order by (select null)"} offset ${offset} rows fetch next ${size} rows only`;
+  }
+  return `${order} limit ${size} offset ${offset}`;
+}
+
 export function nextSort(current: TableSort | null, column: string): TableSort | null {
   if (!current || current.column !== column) return { column, direction: "asc" };
   if (current.direction === "asc") return { column, direction: "desc" };

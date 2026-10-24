@@ -672,3 +672,57 @@ async fn postgres_text_parameters_match_numeric_columns() {
     run(&driver, &id, "DROP TABLE gridl_params").await;
     driver.disconnect(&id).await.expect("disconnect");
 }
+
+#[tokio::test]
+async fn postgres_disconnect_returns_at_once_while_a_query_runs() {
+    let Some(target) = target() else { return };
+    let (driver, id) = open(&target, "pg-quick-disconnect", false).await;
+    let driver = Arc::new(driver);
+    let running = {
+        let (driver, id) = (Arc::clone(&driver), id.clone());
+        tokio::spawn(async move {
+            let mut sink = VecSink(Vec::new());
+            let cancel = Arc::new(AtomicBool::new(false));
+            let _ = driver.query(&id, &request("SELECT pg_sleep(5)", cancel), &mut sink).await;
+        })
+    };
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let started = Instant::now();
+    driver.disconnect(&id).await.expect("disconnect");
+    // The session closes in the background; the caller does not wait for it.
+    assert!(started.elapsed() < Duration::from_millis(200), "took {:?}", started.elapsed());
+    assert!(driver.list_relations(&id).await.is_err());
+    running.abort();
+}
+
+#[tokio::test]
+async fn postgres_reads_one_tables_indexes_and_triggers() {
+    let Some(target) = target() else { return };
+    let (driver, id) = open(&target, "pg-table-objects", false).await;
+    for sql in [
+        "DROP TABLE IF EXISTS gt_item, gt_other",
+        "CREATE TABLE gt_item (id int PRIMARY KEY, name text)",
+        "CREATE TABLE gt_other (id int PRIMARY KEY)",
+        "CREATE INDEX gt_item_name ON gt_item (name)",
+        "CREATE OR REPLACE FUNCTION gt_touch() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$",
+        "CREATE TRIGGER gt_item_touch BEFORE UPDATE ON gt_item FOR EACH ROW EXECUTE FUNCTION gt_touch()",
+    ] {
+        run(&driver, &id, sql).await;
+    }
+    let item = RelationRef {
+        schema: Some("public".into()),
+        name: "gt_item".into(),
+        kind: RelationKind::Table,
+    };
+    let objects = driver.table_objects(&id, &item).await.expect("objects");
+    let mut names: Vec<_> = objects.iter().map(|object| object.name.as_str()).collect();
+    names.sort_unstable();
+    assert_eq!(names, vec!["gt_item_name", "gt_item_pkey", "gt_item_touch"]);
+    assert!(objects.iter().all(|object| object.parent.as_deref() == Some("gt_item")));
+    // The whole catalog says the same about the table.
+    let all = driver.introspect(&id).await.expect("introspect");
+    let index = all.iter().find(|object| object.name == "gt_item_name").expect("index");
+    assert_eq!(index.parent.as_deref(), Some("gt_item"));
+    run(&driver, &id, "DROP TABLE gt_item, gt_other").await;
+    driver.disconnect(&id).await.expect("disconnect");
+}

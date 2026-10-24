@@ -1,5 +1,6 @@
 import { engineSpec } from "../engines";
 import { qualifiedName, quoteIdent, type DatabaseEngine, type SqlValue, type TableSchema } from "../lib/api";
+import { pageClause } from "./filters";
 
 /** How many differing rows the comparison brings back to show. */
 export const compareRowLimit = 1000;
@@ -26,6 +27,7 @@ function differs(engine: DatabaseEngine, left: string, right: string): string {
   const style = engineSpec(engine).sql.nullSafeDiffers;
   if (style === "not-null-safe-equals") return `NOT (${left} <=> ${right})`;
   if (style === "is-not") return `${left} IS NOT ${right}`;
+  if (style === "exists-except") return `EXISTS (SELECT ${left} EXCEPT SELECT ${right})`;
   return `${left} IS DISTINCT FROM ${right}`;
 }
 
@@ -57,7 +59,7 @@ export function compareSql(engine: DatabaseEngine, a: TableSchema, b: TableSchem
   return {
     keys,
     columns,
-    sql: `SELECT * FROM (${union}) gridl_compare LIMIT ${compareRowLimit}`,
+    sql: `SELECT * FROM (${union}) gridl_compare${pageClause(engine, "", compareRowLimit, 0)}`,
     countSql: `SELECT gridl_diff, COUNT(*) FROM (${union}) gridl_compare GROUP BY gridl_diff`,
   };
 }

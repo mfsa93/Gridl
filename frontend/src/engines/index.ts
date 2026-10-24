@@ -17,22 +17,25 @@ export type EngineSpec = {
     identifierQuote: string;
     params: "dollar" | "question";
     paramCasts: boolean;
-    dialect: "postgresql" | "mysql" | "sqlite";
+    dialect: "postgresql" | "mysql" | "sqlite" | "transactsql";
     backslashEscapes: boolean;
     hashComments: boolean;
     dollarQuotes: boolean;
     textCast: string;
-    nullSafeDiffers: "is-distinct-from" | "not-null-safe-equals" | "is-not";
+    nullSafeDiffers: "is-distinct-from" | "not-null-safe-equals" | "is-not" | "exists-except";
     contains: "ilike-text" | "like-escape" | "like";
     booleans: "keyword" | "number";
-    bytes: "escaped-hex" | "x-hex";
+    bytes: "escaped-hex" | "x-hex" | "prefixed-hex";
     emptyInsert: string;
     now: [string, string, string];
     outParamVariables: boolean;
+    nationalText: boolean;
+    paging: "limit-offset" | "offset-fetch";
+    procedureCall: "call" | "exec";
   };
   structure: {
     schemas: boolean;
-    ddl: "postgres" | "mysql" | "sqlite";
+    ddl: "postgres" | "mysql" | "sqlite" | "sqlserver";
     columnTypes: { name: string; kind: "plain" | "length" | "numeric"; generated?: boolean }[];
     keyType: string;
     lengthHint: string | null;
@@ -42,10 +45,12 @@ export type EngineSpec = {
     uniqueOnAdd: boolean;
     alterForeignKeys: boolean;
     dropForeignKey: string;
+    listSchemas: string | null;
+    renameSchemas: boolean;
   };
   tools: {
     explain: "postgres-json" | "mysql-json" | "sqlite-query-plan" | null;
-    rowEstimate: "pg-class" | "information-schema" | null;
+    rowEstimate: "pg-class" | "information-schema" | "sys-partitions" | null;
     backup: "pg-dump" | "mysqldump" | "vacuum-into" | null;
     restore: boolean;
   };

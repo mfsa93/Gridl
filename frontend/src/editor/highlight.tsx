@@ -1,5 +1,5 @@
 import { engineSpec } from "../engines";
-import { MySQL, PostgreSQL, SQLDialect, SQLite } from "@codemirror/lang-sql";
+import { MSSQL, MySQL, PostgreSQL, SQLDialect, SQLite } from "@codemirror/lang-sql";
 import { classHighlighter, highlightCode } from "@lezer/highlight";
 import type { ReactNode } from "react";
 import type { DatabaseEngine } from "../lib/api";
@@ -10,7 +10,7 @@ const postgresBodies = SQLDialect.define({ ...PostgreSQL.spec, doubleDollarQuote
 
 /** SQL as spans with `tok-*` classes, colored by the `.sql-tokens` styles. */
 export function highlightSql(sql: string, engine: DatabaseEngine): ReactNode[] {
-  const dialect = { postgresql: postgresBodies, mysql: MySQL, sqlite: SQLite }[engineSpec(engine).sql.dialect];
+  const dialect = { postgresql: postgresBodies, mysql: MySQL, sqlite: SQLite, transactsql: MSSQL }[engineSpec(engine).sql.dialect];
   const out: ReactNode[] = [];
   highlightCode(
     sql,

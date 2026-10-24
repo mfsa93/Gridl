@@ -8,27 +8,57 @@ else in the app branches on the engine's name, so these two pieces are the whole
 
 Add a variant to `DatabaseEngine` in `crates/gridl-core/src/types.rs` and to the
 `DatabaseEngine` type in `frontend/src/lib/api.ts`. The id (`"duckdb"`) is what
-saved connections store.
+saved connections store. Add a one-line description in `frontend/src/home/engines.ts`
+and both locales.
 
 ## 2. The driver
 
-Create `crates/gridl-core/src/drivers/<engine>.rs` implementing `DatabaseDriver`
-(`crates/gridl-core/src/driver.rs`), then add it to `builtin_drivers()` in
-`crates/gridl-core/src/drivers/mod.rs`. The existing drivers are the reference;
-SQLite (≈600 lines) is the smallest.
+Create a folder `crates/gridl-core/src/drivers/<engine>/` and add the driver to
+`builtin_drivers()` in `crates/gridl-core/src/drivers/mod.rs`. Every driver has
+the same layout, so each file answers one question:
 
-- `connect` / `probe` / `disconnect`: open a session. TLS and the SSH tunnel come
-  in through `ConnectionConfig` and the endpoint argument.
-- `introspect`, `list_relations`, `describe_relation`, `foreign_keys`: read the
-  catalog in parallel queries. Prefer the engine's own catalog tables over slow
-  `information_schema` views.
-- `query`: stream rows. Never collect the result; call `ChunkSink::on_chunk` for
-  each chunk. Keep one pinned connection for the editor and another for
-  `request.browse`, so the table browser never waits behind the editor.
-- Decode every value to `SqlValue`: text from the server's own output, numbers as
-  `Int`/`Float`, binary as `Bytes`. Unknown types fall back to text, never to an error.
+| File | What it holds |
+|---|---|
+| `mod.rs` | The `DatabaseDriver` impl: short methods that delegate to the files below |
+| `connect.rs` | Connection options, TLS, the SSH tunnel endpoint, opening the pool |
+| `catalog.rs` | Tables, views, columns, keys, foreign keys |
+| `objects.rs` | Routines, triggers, indexes, sequences (when the engine has them) |
+| `query.rs` | Running the editor's SQL, cancelling it, decoding rows |
+| `literal.rs` / `lexer.rs` | Engine-specific SQL text handling (placeholders, batches) |
+| `backup.rs` | Backup and restore with the engine's command line tools |
+
+What is the same for every engine lives in `drivers/common/` and is not written again:
+
+- `session`: `Sessions` (open sessions by connection id) and `Pinned` (the
+  editor's and the table browser's connections).
+- `cancel`: `interruptible` (ask the server to stop, then let the statement
+  finish) and `abandonable` (drop the request, then tell the server).
+- `result`: the `QueryResult` and the closing chunk (`streamed`, `done`, `cancelled`).
+- `stream`: `emit_chunks` turns any row stream into chunks; never collect a result.
+- `bind`: parameters for sqlx engines (`bound::<Postgres>(sql, params)`).
+- `catalog`: `push_column` and `push_key_column` build schemas from catalog
+  rows; `definition_only` and `plain_column` for simple objects.
+- `decode`: per-cell size limits.
+
+Rules every driver keeps:
+
+- Read the catalog in parallel queries, from the engine's own catalog tables
+  rather than slow `information_schema` views.
+- Decode every value to `SqlValue`: text from the server's own output, numbers
+  as `Int`/`Float`, binary as `Bytes`. Unknown types fall back to text, never to an error.
 - `execute_batch`: one transaction, bound parameters.
 - `check`: report the position of a syntax error without running the statement.
+- `table_objects`: the indexes and triggers of one table, with `parent` set, so
+  a structure change reloads only what it touched.
+- `backup` / `restore` (optional): the engine's own tools, run through
+  `drivers/common/tools.rs` (`Tool`, `address`, `run`). Passwords go in the
+  environment, never on the command line. Engines without them keep the
+  trait's default, which refuses with a clear message. The desktop shell
+  never names an engine: it checks paths and the safety policy and calls these.
+- Keep files under ~300 lines; split by responsibility, not by size.
+
+SQLite is the smallest example; SQL Server shows an engine without sqlx
+(tiberius, with its own small pool in `pool.rs`).
 
 ## 3. The spec
 

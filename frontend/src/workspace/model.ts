@@ -5,6 +5,7 @@ import { type ShownError } from "../lib/errors";
 import type { PlanNode } from "./plan";
 import { formatNumber, plural, t } from "../lib/i18n";
 import { type TableFilter, type TableSort } from "./filters";
+import { textLiteral } from "./export";
 
 export const sqlTabId = "sql";
 
@@ -66,6 +67,10 @@ export function rowEstimateSql(table: TableSchema, engine: DatabaseEngine): stri
   if (source === "information-schema") {
     const hex = (text: string) => Array.from(new TextEncoder().encode(text), (byte) => byte.toString(16).padStart(2, "0")).join("");
     return `select table_rows from information_schema.tables where table_schema = convert(X'${hex(table.schema ?? "")}' using utf8mb4) and table_name = convert(X'${hex(table.name)}' using utf8mb4)`;
+  }
+  if (source === "sys-partitions") {
+    // Rows of the heap or clustered index, kept current by the server.
+    return `select sum(rows) from sys.partitions where object_id = object_id(${textLiteral(qualifiedName(table), engine)}) and index_id in (0, 1)`;
   }
   return null;
 }
@@ -335,4 +340,28 @@ export function namesFromTables(list: TableSchema[]): string[] {
 
 export function kindLabel(kind: TableSchema["kind"]) {
   return t(`model.kind.${kind}`);
+}
+
+/** `fresh` with the definition and result type a description leaves out, kept from `known`. */
+export function keepDefinition(fresh: TableSchema, known: TableSchema | undefined): TableSchema {
+  return { ...fresh, definition: fresh.definition ?? known?.definition ?? null, returns: fresh.returns ?? known?.returns ?? null };
+}
+
+/**
+ * The catalog with one table read again: the table replaced (or added where
+ * the catalog would list it, by name among its kind and schema), and its
+ * indexes and triggers replaced by `attached`, so dropped ones disappear.
+ */
+export function withTable(catalog: TableSchema[], fresh: TableSchema, attached: TableSchema[]): TableSchema[] {
+  const id = tableTabId(fresh);
+  const hangsFromIt = (item: TableSchema) => item.parent === fresh.name && (item.schema ?? null) === (fresh.schema ?? null);
+  const known = catalog.find((item) => tableTabId(item) === id);
+  let next = catalog.filter((item) => !hangsFromIt(item));
+  if (known) {
+    next = next.map((item) => (tableTabId(item) === id ? keepDefinition(fresh, item) : item));
+  } else {
+    const at = next.findIndex((item) => item.kind === fresh.kind && item.schema === fresh.schema && item.name.localeCompare(fresh.name) > 0);
+    next = at < 0 ? [...next, fresh] : [...next.slice(0, at), fresh, ...next.slice(at)];
+  }
+  return [...next, ...attached];
 }

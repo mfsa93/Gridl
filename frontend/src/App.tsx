@@ -10,13 +10,13 @@ import type { ConnectingState } from "./home/ConnectingStatus";
 import { ConnectionHome, type HomeCommand } from "./home/ConnectionHome";
 import { UpdateCenter } from "./home/UpdateCenter";
 import { toConfig, type Draft } from "./home/draft";
-import { cancelQuery, connect, createGroup, deleteGroup, deleteProfile, disconnect, errorMessage, checkSql, defaultSafety, executeBatch, GuardError, executeQuery, exportQuery, importCsv, backupDatabase, restoreDatabase, formatSqlValue, introspect, listForeignKeys, listProfiles, closeDiscarding, listenHere, openConnectionWindow, openHomeWindow, emptyTeam, teamState, teamLink, teamShare, teamUnshare, teamSaveQueries, type TeamState, quitDiscarding, setUnsaved, qualifiedName, quoteIdent, saveConnection, setDialect, testConnection, writeExport, type BatchStatement, type BrowseKind, type ColumnDefinition, type ConnectionCatalog, type ConnectionConfig, type DatabaseEngine, type ForeignKey, type GuardInfo, type SqlValue, type TableSchema, type TestResult } from "./lib/api";
+import { cancelQuery, connect, createGroup, deleteGroup, deleteProfile, disconnect, errorMessage, checkSql, defaultSafety, executeBatch, GuardError, executeQuery, exportQuery, importCsv, backupDatabase, restoreDatabase, formatSqlValue, introspect, describeRelation, tableObjects, listForeignKeys, listProfiles, closeDiscarding, listenHere, openConnectionWindow, openHomeWindow, emptyTeam, teamState, teamLink, teamShare, teamUnshare, teamSaveQueries, type TeamState, quitDiscarding, setUnsaved, qualifiedName, quoteIdent, saveConnection, setDialect, testConnection, writeExport, type BatchStatement, type BrowseKind, type ColumnDefinition, type ConnectionCatalog, type ConnectionConfig, type DatabaseEngine, type ForeignKey, type GuardInfo, type SqlValue, type TableSchema, type TestResult } from "./lib/api";
 import { canEditRows, createSchemaSql, createTableSql, deleteSql, dropSchemaSql, insertSql, listSchemasSql, renameSchemaSql, routineCallSql, rowRecord, schemaNameFrom, updateSql, type ColumnDraft } from "./workspace/changes";
 import { CodedError, describeError, errorCode, isConnectionLost, type ShownError } from "./lib/errors";
 import { formatNumber, formatTime, plural, t } from "./lib/i18n";
 import { ConfirmDialog, NameDialog, TableDialog } from "./workspace/dialogs";
 import { exportRows, toJson, sqlLiteral, toTsv, type ExportFormat } from "./workspace/export";
-import { nextSort, orderClause, whereClause, type TableFilter } from "./workspace/filters";
+import { nextSort, orderClause, pageClause, whereClause, type TableFilter } from "./workspace/filters";
 import { clearHistory, forgetHistory, pushHistory, readHistory, removeHistory, toggleStar, type HistoryEntry } from "./workspace/history";
 import { environmentLabel } from "./lib/environments";
 import { ContextMenu, CopyButton, ErrorPanel, GuardDialog, UnsavedDialog, ExportMenu, type MenuItem, FilterBar, FilterToggle, HistoryMenu, PreviewDialog, ResultMessage, RoutineSummary, RowDetails } from "./workspace/panels";
@@ -34,10 +34,11 @@ import { ErDiagram } from "./workspace/ErDiagram";
 import { CompareView } from "./workspace/CompareView";
 import { QuickOpen } from "./workspace/QuickOpen";
 import { LogoLoader } from "./workspace/LogoLoader";
+import { hideSplash } from "./splash";
 import { ConnectionSwitcher } from "./workspace/ConnectionSwitcher";
 import { SchemaPicker } from "./workspace/SchemaPicker";
 import { StructureEditor } from "./workspace/StructureEditor";
-import { isSqlTab, kindLabel, largeTableRows, nextSqlTabId, pageSizes, pageStatus, rowEstimateSql, sqlTabId, sqlTabNumber, countValue, clonePending, pendingEmpty, viewKey, viewLabel, primaryKeyList, emptyView, tableTabId, showsRows, objectGroups, schemaMap, describeTabChanges, pendingSummary, pastedRow, isHeaderRow, mergeColumns, structureKey, sameDisplayedRow, fieldsFromValues, fieldsFromDraft, namesFromTables, scriptResultLabel, type ScriptResult, type TableQuery, type TablePage, type TabView, type TableTab, type PendingChanges, type PageStash, type UndoEntry, type WorkspaceDialog } from "./workspace/model";
+import { isSqlTab, kindLabel, largeTableRows, nextSqlTabId, pageSizes, pageStatus, rowEstimateSql, sqlTabId, sqlTabNumber, countValue, clonePending, pendingEmpty, viewKey, viewLabel, primaryKeyList, emptyView, tableTabId, showsRows, objectGroups, schemaMap, describeTabChanges, pendingSummary, pastedRow, isHeaderRow, mergeColumns, structureKey, sameDisplayedRow, fieldsFromValues, fieldsFromDraft, namesFromTables, keepDefinition, withTable, scriptResultLabel, type ScriptResult, type TableQuery, type TablePage, type TabView, type TableTab, type PendingChanges, type PageStash, type UndoEntry, type WorkspaceDialog } from "./workspace/model";
 import { sessionKey, workspaceTabs, readSession, writeSession, readSchemaView, writeSchemaView, matchTabs, readPaneWidth, readResultsHeight, clampResults, clampPane, paneLimit } from "./workspace/session";
 import { PaneSplitter, TablePager, TreeBranch, ObjectIcon, TableLeaf } from "./workspace/chrome";
 
@@ -78,6 +79,12 @@ export function App() {
   const savedQueriesRef = useRef(savedQueries);
   savedQueriesRef.current = savedQueries;
   const [tables, setTables] = useState<TableSchema[]>([]);
+  /** The workspace is open and the catalog is still being read. */
+  const [schemaLoading, setSchemaLoading] = useState(false);
+  /** Bumped when a deferred schema arrives, so the tabs it restores load their rows. */
+  const [schemaArrived, setSchemaArrived] = useState(0);
+  /** Tells a schema that arrives late from one for the current session. */
+  const schemaEpoch = useRef(0);
   const [foreignKeys, setForeignKeys] = useState<ForeignKey[]>([]);
   const [tableTabs, setTableTabs] = useState<TableTab[]>([]);
   const [paging, setPaging] = useState<Record<string, TablePage>>({});
@@ -354,7 +361,13 @@ export function App() {
 
   const saveWorkspace = (id: string) => {
     const state = workspaceState.current;
-    writeSession(id, { ...sqlSnapshot(id), activeTab: state.activeTabId, tabs: workspaceTabs(state.tabs) });
+    // Until the schema arrives the table tabs are not restored; keep the saved ones.
+    const kept = schemaLoading ? readSession(id) : null;
+    writeSession(id, {
+      ...sqlSnapshot(id),
+      activeTab: kept?.activeTab ?? state.activeTabId,
+      tabs: kept?.tabs ?? workspaceTabs(state.tabs),
+    });
   };
   const saveWorkspaceRef = useRef(saveWorkspace);
   saveWorkspaceRef.current = saveWorkspace;
@@ -400,6 +413,8 @@ export function App() {
         activeQuery.current = null;
         runningTab.current = null;
         commandNonce.current += 1;
+        schemaEpoch.current += 1;
+        setSchemaLoading(false);
         setActive(null);
         setTables([]);
         resetTableQueriesRef.current();
@@ -462,7 +477,9 @@ export function App() {
       })
       .catch((caught: unknown) => {
         if (!cancelled) setError(errorMessage(caught));
-      });
+      })
+      // The window has what it shows first: the connections, or an error about them.
+      .finally(hideSplash);
     return () => {
       cancelled = true;
     };
@@ -478,15 +495,23 @@ export function App() {
     return typeof selected === "string" ? selected : null;
   };
 
-  const enter = (config: ConnectionConfig, nextTables: TableSchema[]) => {
+  /**
+   * Opens the workspace. With `nextTables` null the catalog is read afterwards
+   * (`loadSchema`): the editor is usable at once and the explorer fills in.
+   */
+  const enter = (config: ConnectionConfig, nextTables: TableSchema[] | null) => {
     const saved = readSession(config.id);
-    const tabs = matchTabs(saved, nextTables);
+    const deferred = nextTables === null;
+    const known = nextTables ?? [];
+    const tabs = matchTabs(saved, known);
     const savedSql = saved?.sqlTabs ?? [{ id: sqlTabId, sql: saved?.sql ?? "" }];
     const sqlIds = savedSql.map((tab) => tab.id);
     const nextTab = saved && (sqlIds.includes(saved.activeTab) || tabs.some((tab) => tab.id === saved.activeTab)) ? saved.activeTab : sqlIds[0];
+    schemaEpoch.current += 1;
+    setSchemaLoading(deferred);
     setDialect(config.engine);
     setActive(config);
-    setTables(nextTables);
+    setTables(known);
     setForeignKeys([]);
     void listForeignKeys(config.id).then(setForeignKeys).catch(() => undefined);
     setHistory(readHistory(config.id));
@@ -517,9 +542,47 @@ export function App() {
     setSelectedTable(tabs.find((tab) => tab.id === nextTab)?.table ?? null);
     setViews(Object.fromEntries(sqlIds.map((id) => [id, emptyView(t("app.empty.start"))])));
     pendingLoads.current = tabs.filter((tab) => showsRows(tab.table)).map((tab) => tab.table);
-    setDbSchemas(namesFromTables(nextTables));
-    if (engineSpec(config.engine).structure.schemas) void readSchemas(config.id).then(setDbSchemas).catch(() => undefined);
+    setDbSchemas(namesFromTables(known));
+    if (engineSpec(config.engine).structure.schemas) void readSchemas(config.id, config.engine).then(setDbSchemas).catch(() => undefined);
     setScreen("workspace");
+    if (deferred) void loadSchema(config, sqlIds[0] ?? sqlTabId);
+  };
+
+  /**
+   * Reads the catalog of a workspace opened without it, then restores the
+   * table tabs of the saved session. `fallbackTab` is the tab shown meanwhile;
+   * if the user is still on it, the saved active tab comes back.
+   */
+  const loadSchema = async (config: ConnectionConfig, fallbackTab: string) => {
+    const epoch = schemaEpoch.current;
+    const current = () => epoch === schemaEpoch.current && activeRef.current?.id === config.id;
+    let next: TableSchema[];
+    try {
+      next = await introspect(config.id);
+    } catch (caught) {
+      if (!current()) return;
+      setSchemaLoading(false);
+      setViews((views) => ({
+        ...views,
+        [fallbackTab]: { ...(views[fallbackTab] ?? emptyView()), status: t("app.explorer.loadFailed", { error: errorMessage(caught) }) },
+      }));
+      return;
+    }
+    if (!current()) return;
+    const saved = readSession(config.id);
+    const tabs = matchTabs(saved, next);
+    setTables(next);
+    setDbSchemas((names) => [...new Set([...names, ...namesFromTables(next)])].sort((left, right) => left.localeCompare(right)));
+    setTableTabs(tabs);
+    const restored = tabs.find((tab) => tab.id === saved?.activeTab);
+    if (restored && workspaceState.current.activeTabId === fallbackTab) {
+      setActiveTabId(restored.id);
+      setSelectedTable(restored.table);
+    }
+    pendingLoads.current = tabs.filter((tab) => showsRows(tab.table)).map((tab) => tab.table);
+    setSchemaArrived((count) => count + 1);
+    setSchemaLoading(false);
+    relintEditors();
   };
 
   const openSavedRef = useRef<(profile: ConnectionConfig) => Promise<boolean>>(async () => false);
@@ -569,10 +632,11 @@ export function App() {
         sshSecret: null,
         rememberSshSecret: false,
         trustSshHost: false,
+        deferSchema: true,
       });
       if (!response) return false;
-      setCatalog(await listProfiles());
-      enter(response.config, response.tables);
+      enter(response.config, null);
+      void listProfiles().then(setCatalog).catch(() => undefined);
       return true;
     } catch (caught) {
       const message = errorMessage(caught);
@@ -598,10 +662,10 @@ export function App() {
         trustSshHost: draft.trustSshHost,
       };
       if (openAfter) {
-        const response = await connectWithStatus(request);
+        const response = await connectWithStatus({ ...request, deferSchema: true });
         if (!response) return false;
-        setCatalog(await listProfiles());
-        enter(response.config, response.tables);
+        enter(response.config, null);
+        void listProfiles().then(setCatalog).catch(() => undefined);
       } else {
         setCatalog(await saveConnection(request));
       }
@@ -697,8 +761,9 @@ export function App() {
     setInTransaction(false);
     if (active) saveWorkspace(active.id);
     const queryId = activeQuery.current;
-    if (queryId) await cancelQuery(queryId).catch(() => undefined);
-    if (active) await disconnect(active.id).catch(() => undefined);
+    const closing = active?.id;
+    schemaEpoch.current += 1;
+    setSchemaLoading(false);
     activeQuery.current = null;
     runningTab.current = null;
     setActive(null);
@@ -706,6 +771,18 @@ export function App() {
     resetTabs();
     setRunning(false);
     setScreen("home");
+    // The list shows at once; the running query and the session end behind it.
+    // Opening the same connection again waits for that close in connectTail.
+    const ending = (async () => {
+      if (queryId) await cancelQuery(queryId).catch(() => undefined);
+      if (closing) await disconnect(closing).catch(() => undefined);
+    })();
+    if (closing) {
+      connectTail.current.set(closing, ending);
+      void ending.finally(() => {
+        if (connectTail.current.get(closing) === ending) connectTail.current.delete(closing);
+      });
+    }
   };
 
   const refreshSchema = async () => {
@@ -723,7 +800,7 @@ export function App() {
         if (!current) return current;
         return next.find((table) => tableTabId(table) === tableTabId(current)) ?? current;
       });
-      if (engineSpec(active.engine).structure.schemas) setDbSchemas(await readSchemas(active.id));
+      if (engineSpec(active.engine).structure.schemas) setDbSchemas(await readSchemas(active.id, active.engine));
     } catch (caught) {
       setViews((current) => ({
         ...current,
@@ -733,6 +810,38 @@ export function App() {
   };
 
   refreshSchemaRef.current = () => void refreshSchema();
+
+  /**
+   * Reads one table again after its structure changed (or after it was
+   * created), with what hangs from it: its indexes, its triggers and the
+   * foreign keys. Everything the user can see of it is current again, and
+   * the rest of the catalog, which did not change, is not read. Falls back to
+   * the whole schema when the table cannot be read alone.
+   */
+  const refreshTable = async (table: Pick<TableSchema, "schema" | "name" | "kind">): Promise<TableSchema | null> => {
+    if (!active) return null;
+    const relation = { schema: table.schema ?? null, name: table.name, kind: table.kind };
+    void listForeignKeys(active.id).then(setForeignKeys).catch(() => undefined);
+    let fresh: TableSchema;
+    let attached: TableSchema[];
+    try {
+      [fresh, attached] = await Promise.all([describeRelation(active.id, relation), tableObjects(active.id, relation)]);
+    } catch {
+      await refreshSchema();
+      return null;
+    }
+    // Some catalogs describe a table they cannot find as one without columns.
+    if (fresh.columns.length === 0) {
+      await refreshSchema();
+      return null;
+    }
+    setTables((current) => withTable(current, fresh, attached));
+    const id = tableTabId(fresh);
+    setTableTabs((current) => current.map((tab) => (tab.id === id ? { ...tab, table: keepDefinition(fresh, tab.table) } : tab)));
+    setSelectedTable((current) => (current && tableTabId(current) === id ? keepDefinition(fresh, current) : current));
+    relintEditors();
+    return fresh;
+  };
 
   const runWrite = useCallback(async (sql: string, params: SqlValue[] = []) => {
     if (!active || writeLock.current) return false;
@@ -1168,7 +1277,7 @@ export function App() {
       const nextPage = Math.max(0, page);
       const offset = nextPage * size;
       const loaded = await collectQuery(
-        `select * from ${qualifiedName(table)}${where}${order} limit ${size} offset ${offset}`,
+        `select * from ${qualifiedName(table)}${where}${pageClause(active.engine, order, size, offset)}`,
       );
       if (!loaded || (loaded.result.cancelled && loaded.rows.length === 0)) return;
       if (loaded.rows.length === 0 && nextPage > 0) {
@@ -1279,14 +1388,15 @@ export function App() {
     pendingLoads.current = [];
     for (const table of loads) void loadTable(table, 0, restoreTableStateRef.current(table));
     return undefined;
-  }, [active, loadTable]);
+  }, [active, loadTable, schemaArrived]);
 
   useEffect(() => {
-    if (!active) return undefined;
+    // Until the schema arrives the table tabs are not restored yet; saving now would drop them.
+    if (!active || schemaLoading) return undefined;
     writeSession(active.id, { ...sqlSnapshot(active.id), activeTab: activeTabId, tabs: workspaceTabs(tableTabs) });
     return undefined;
     // sqlTabs is read through its ref; listing it re-saves when tabs open or close.
-  }, [active, activeTabId, tableTabs, sqlTabs]);
+  }, [active, activeTabId, tableTabs, sqlTabs, schemaLoading]);
 
   // Each open table remembers its filters, sort and page size for the next visit.
   useEffect(() => {
@@ -1503,10 +1613,11 @@ export function App() {
       ? detailTable
       : null;
 
-  const reloadOpenTable = async (table: TableSchema, keepPending = false) => {
-    await refreshSchema();
+  /** Reloads a table's rows; after a change to its structure, its columns first. */
+  const reloadOpenTable = async (table: TableSchema, keepPending = false, structureChanged = true) => {
+    const fresh = structureChanged ? await refreshTable(table) : null;
     const page = paging[tableTabId(table)];
-    await loadTable(table, page?.page ?? 0, page?.pageSize ?? 100, keepPending);
+    await loadTable(fresh ?? table, page?.page ?? 0, page?.pageSize ?? 100, keepPending);
   };
 
   const moveSchema = (from: string, to: string) => {
@@ -1586,11 +1697,13 @@ export function App() {
 
   const submitTable = async (name: string, columns: Parameters<typeof createTableSql>[2]) => {
     try {
-      const sql = createTableSql(engineInfo.structure.schemas ? activeSchema || null : null, name, columns, engine);
+      const schema = engineInfo.structure.schemas ? activeSchema || null : null;
+      const sql = createTableSql(schema, name, columns, engine);
       const ok = await runWrite(sql);
       if (!ok) return;
       setDialog(null);
-      await refreshSchema();
+      // Only the new table needs reading; it joins the explorer as it is.
+      await refreshTable({ schema, name: name.trim(), kind: "table" });
     } catch (caught) {
       setFormError(errorMessage(caught));
     }
@@ -1801,7 +1914,7 @@ export function App() {
     setPreview(null);
     clearPending(id);
     dropStashes(id);
-    await reloadOpenTable(activeTable.table);
+    await reloadOpenTable(activeTable.table, false, false);
   };
 
   const changeQuery = (table: TableSchema, query: TableQuery) => {
@@ -1851,7 +1964,7 @@ export function App() {
         authorized,
       }));
       setImporting(null);
-      await reloadOpenTable(job.table);
+      await reloadOpenTable(job.table, false, false);
       setStatus(job.tab, plural("app.status.imported", done.rows, { ms: done.durationMs }));
     } catch (caught) {
       setImporting((current) => (current ? { ...current, busy: false, progress: null, error: errorMessage(caught) } : current));
@@ -2291,7 +2404,7 @@ export function App() {
             <Search size={14} />
             <input value={objectQuery} placeholder={t("app.explorer.search")} onChange={(event) => setObjectQuery(event.target.value)} />
           </div>
-          {engineInfo.structure.schemas ? (
+          {engineInfo.structure.schemas && !(schemaLoading && schemaNames.length === 0) ? (
             <div className="schema-bar">
               <SchemaPicker
                 schemas={schemaNames}
@@ -2303,9 +2416,11 @@ export function App() {
               />
               {!allSchemas && activeSchema ? (
                 <>
-                  <button type="button" className="tiny-icon" aria-label={t("app.explorer.rename", { name: activeSchema })} title={t("app.explorer.rename", { name: activeSchema })} disabled={structureLocked || running} onClick={() => openDialog({ kind: "rename-schema", name: activeSchema })}>
-                    <Pencil size={13} />
-                  </button>
+                  {engineInfo.structure.renameSchemas ? (
+                    <button type="button" className="tiny-icon" aria-label={t("app.explorer.rename", { name: activeSchema })} title={t("app.explorer.rename", { name: activeSchema })} disabled={structureLocked || running} onClick={() => openDialog({ kind: "rename-schema", name: activeSchema })}>
+                      <Pencil size={13} />
+                    </button>
+                  ) : null}
                   <button type="button" className="tiny-icon" aria-label={t("app.explorer.delete", { name: activeSchema })} title={t("app.explorer.delete", { name: activeSchema })} disabled={structureLocked || running} onClick={() => openDialog({ kind: "drop-schema", name: activeSchema })}>
                     <Trash2 size={13} />
                   </button>
@@ -2317,8 +2432,13 @@ export function App() {
             </div>
           ) : null}
           <div className="tree-section">
+            {schemaLoading ? (
+              <div className="tree-item depth-0 schema-loading" role="status">
+                <LogoLoader size={18} /> {t("app.explorer.loading")}
+              </div>
+            ) : null}
             {engineInfo.structure.schemas && !schemaTree ? (
-              activeSchema ? renderGroups(activeSchema, "depth-0", "depth-1") : <div className="tree-item depth-0">{t("app.explorer.noSchemas")}</div>
+              activeSchema ? renderGroups(activeSchema, "depth-0", "depth-1") : schemaLoading ? null : <div className="tree-item depth-0">{t("app.explorer.noSchemas")}</div>
             ) : (
             <TreeBranch
               label={active?.database || t("app.explorer.database")}
@@ -2346,9 +2466,11 @@ export function App() {
                       }}
                       actions={
                         <>
-                          <button type="button" className="tiny-icon" aria-label={t("app.explorer.rename", { name })} disabled={structureLocked || running} onClick={() => openDialog({ kind: "rename-schema", name })}>
-                            <Pencil size={13} />
-                          </button>
+                          {engineInfo.structure.renameSchemas ? (
+                            <button type="button" className="tiny-icon" aria-label={t("app.explorer.rename", { name })} disabled={structureLocked || running} onClick={() => openDialog({ kind: "rename-schema", name })}>
+                              <Pencil size={13} />
+                            </button>
+                          ) : null}
                           <button type="button" className="tiny-icon" aria-label={t("app.explorer.delete", { name })} disabled={structureLocked || running} onClick={() => openDialog({ kind: "drop-schema", name })}>
                             <Trash2 size={13} />
                           </button>
@@ -2360,7 +2482,7 @@ export function App() {
                   );
                 })
               ) : renderGroups(null, "depth-1", "depth-2")}
-              {engineInfo.structure.schemas && schemaNames.length === 0 ? <div className="tree-item depth-1">{t("app.explorer.noSchemas")}</div> : null}
+              {engineInfo.structure.schemas && schemaNames.length === 0 && !schemaLoading ? <div className="tree-item depth-1">{t("app.explorer.noSchemas")}</div> : null}
             </TreeBranch>
             )}
             {savedQueries.length > 0 ? (
@@ -3011,10 +3133,12 @@ export function App() {
   );
 }
 
-async function readSchemas(connectionId: string): Promise<string[]> {
+async function readSchemas(connectionId: string, engine: DatabaseEngine): Promise<string[]> {
+  const sql = listSchemasSql(engine);
+  if (!sql) return [];
   const names: string[] = [];
   await executeQuery(
-    { connectionId, queryId: crypto.randomUUID(), sql: listSchemasSql(), params: [], chunkRows: 200 },
+    { connectionId, queryId: crypto.randomUUID(), sql, params: [], chunkRows: 200 },
     (chunk) => {
       for (const row of chunk.rows) {
         const name = schemaNameFrom(row[0]);

@@ -5,7 +5,7 @@ import { describeError, isConnectionLost } from "../lib/errors";
 import { formatNumber, t } from "../lib/i18n";
 import { exportRows, sqlLiteral, toTsv } from "../workspace/export";
 import { nextSort, orderClause, whereClause, type TableFilter } from "../workspace/filters";
-import { describeTabChanges, pageStatus, primaryKeyList, rowEstimateSql, viewKey } from "../workspace/model";
+import { describeTabChanges, pageStatus, primaryKeyList, rowEstimateSql, viewKey, withTable } from "../workspace/model";
 
 const column = (name: string, primaryKey = false): ColumnDefinition => ({ name, dataType: "text", nullable: !primaryKey, primaryKey, defaultValue: null, options: [] });
 const filter = (op: TableFilter["op"], value = "", name = "name"): TableFilter => ({ id: "1", column: name, op, value, enabled: true });
@@ -104,5 +104,27 @@ describe("table pages", () => {
       "select table_rows from information_schema.tables where table_schema = convert(X'73686f70' using utf8mb4) and table_name = convert(X'69742773' using utf8mb4)",
     );
     expect(rowEstimateSql(items, "sqlite")).toBeNull();
+  });
+});
+
+describe("withTable", () => {
+  const table = (name: string, extra: Partial<TableSchema> = {}): TableSchema => ({ schema: "public", name, kind: "table", columns: [], definition: null, ...extra });
+  const index = (name: string, parent: string): TableSchema => ({ schema: "public", name, kind: "index", columns: [], definition: `create index ${name}`, parent });
+
+  it("replaces the table and the indexes that hang from it, leaving the rest", () => {
+    const catalog = [table("a"), table("b"), index("a_x", "a"), index("a_old", "a"), index("b_x", "b")];
+    const next = withTable(catalog, table("a", { columns: [{ name: "x", dataType: "int", nullable: true, primaryKey: false, defaultValue: null, options: [] }] }), [index("a_x", "a")]);
+    expect(next.map((item) => item.name)).toEqual(["a", "b", "b_x", "a_x"]);
+    expect(next[0].columns).toHaveLength(1);
+  });
+
+  it("adds a new table where the catalog lists it", () => {
+    const next = withTable([table("a"), table("c"), index("c_x", "c")], table("b"), []);
+    expect(next.map((item) => item.name)).toEqual(["a", "b", "c", "c_x"]);
+  });
+
+  it("keeps a view's definition, which a description leaves out", () => {
+    const view = table("v", { kind: "view", definition: "select 1" });
+    expect(withTable([view], { ...view, definition: null }, [])[0].definition).toBe("select 1");
   });
 });

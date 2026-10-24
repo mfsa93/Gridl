@@ -18,8 +18,8 @@ mod types;
 mod value;
 mod vault;
 
-pub use driver::{ChunkSink, DatabaseDriver};
-pub use drivers::{builtin_drivers, MysqlDriver, PostgresDriver, SqliteDriver};
+pub use driver::{ChunkSink, DatabaseDriver, ToolAccess};
+pub use drivers::{builtin_drivers, MysqlDriver, PostgresDriver, SqliteDriver, SqlserverDriver};
 pub use engines::{
     builtin_specs, spec as engine_spec, BackupTool, BooleanLiteral, BytesLiteral, EngineSpec,
 };
