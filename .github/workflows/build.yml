@@ -47,7 +47,7 @@ jobs:
           --target ${{ inputs.target }}
           --bundles dmg
           --config '{"bundle":{"createUpdaterArtifacts":false}}'
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: Gridl-${{ github.ref_name }}-${{ inputs.target }}-${{ github.sha }}
           path: target/${{ inputs.target }}/release/bundle/dmg/*.dmg
