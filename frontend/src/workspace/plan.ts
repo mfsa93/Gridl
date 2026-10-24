@@ -1,3 +1,4 @@
+import { engineSpec } from "../engines";
 import type { DatabaseEngine, SqlValue } from "../lib/api";
 import { t } from "../lib/i18n";
 
@@ -19,8 +20,9 @@ export const fullScanRows = 10_000;
 /** The statement that asks the engine for its plan. Nothing is executed. */
 export function explainSql(engine: DatabaseEngine, sql: string): string {
   const statement = sql.trim().replace(/;\s*$/, "");
-  if (engine === "postgres") return `EXPLAIN (FORMAT JSON) ${statement}`;
-  if (engine === "mysql") return `EXPLAIN FORMAT=JSON ${statement}`;
+  const style = engineSpec(engine).tools.explain;
+  if (style === "postgres-json") return `EXPLAIN (FORMAT JSON) ${statement}`;
+  if (style === "mysql-json") return `EXPLAIN FORMAT=JSON ${statement}`;
   return `EXPLAIN QUERY PLAN ${statement}`;
 }
 
@@ -31,12 +33,13 @@ const number = (value: unknown) => {
 };
 
 export function parsePlan(engine: DatabaseEngine, rows: SqlValue[][]): PlanNode[] {
-  if (engine === "sqlite") return sqlitePlan(rows);
+  const style = engineSpec(engine).tools.explain;
+  if (style === "sqlite-query-plan") return sqlitePlan(rows);
   const raw = text(rows[0]?.[0]);
   // The driver replaces cells over its size cap with a placeholder.
   if (/^<text \d+ bytes>$/.test(raw)) throw new Error(t("app.plan.tooLarge"));
   const parsed: unknown = JSON.parse(raw);
-  return engine === "postgres" ? postgresPlan(parsed) : mysqlPlan(parsed);
+  return style === "postgres-json" ? postgresPlan(parsed) : mysqlPlan(parsed);
 }
 
 type PgNode = Record<string, unknown> & { Plans?: PgNode[] };

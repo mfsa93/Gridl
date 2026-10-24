@@ -1,3 +1,4 @@
+import { engineSpec } from "../engines";
 import { quoteIdent, type DatabaseEngine, type TableSchema } from "../lib/api";
 import { t } from "../lib/i18n";
 import { textLiteral } from "./export";
@@ -63,9 +64,10 @@ function likePattern(value: string, engine: DatabaseEngine, before: boolean, aft
 
 function likeClause(column: string, engine: DatabaseEngine, pattern: string, negate: boolean): string {
   const not = negate ? "not " : "";
-  // MySQL already escapes with backslash; the others need it spelled out.
-  if (engine === "postgres") return `cast(${column} as text) ${not}ilike ${pattern} escape '\\'`;
-  if (engine === "sqlite") return `${column} ${not}like ${pattern} escape '\\'`;
+  const style = engineSpec(engine).sql.contains;
+  if (style === "ilike-text") return `cast(${column} as text) ${not}ilike ${pattern} escape '\\'`;
+  if (style === "like-escape") return `${column} ${not}like ${pattern} escape '\\'`;
+  // Engines that read backslash as an escape already have it.
   return `${column} ${not}like ${pattern}`;
 }
 

@@ -1,3 +1,4 @@
+import { engineSpec } from "../engines";
 import { t } from "../lib/i18n";
 import { quoteIdent, qualifiedName, type DatabaseEngine, type ForeignKey, type TableSchema } from "../lib/api";
 
@@ -73,13 +74,13 @@ export function foreignKeyName(table: string, columns: string[]): string {
 }
 
 export function addForeignKeySql(engine: DatabaseEngine, table: TableSchema, key: NewForeignKey): string {
-  if (engine === "sqlite") throw new Error(t("relations.sqliteNoAdd"));
+  if (!engineSpec(engine).structure.alterForeignKeys) throw new Error(t("relations.noAdd", { engine: engineSpec(engine).name }));
   const name = quoteIdent(foreignKeyName(table.name, key.columns));
   return `alter table ${qualifiedName(table)} add constraint ${name} ${foreignKeyClause(key)}`;
 }
 
 export function dropForeignKeySql(engine: DatabaseEngine, table: TableSchema, name: string): string {
-  if (engine === "sqlite") throw new Error(t("relations.sqliteNoDrop"));
-  const verb = engine === "mysql" ? "drop foreign key" : "drop constraint";
+  if (!engineSpec(engine).structure.alterForeignKeys) throw new Error(t("relations.noDrop", { engine: engineSpec(engine).name }));
+  const verb = engineSpec(engine).structure.dropForeignKey;
   return `alter table ${qualifiedName(table)} ${verb} ${quoteIdent(name)}`;
 }

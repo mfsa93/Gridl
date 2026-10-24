@@ -6,6 +6,7 @@
 
 mod driver;
 mod drivers;
+mod engines;
 mod error;
 mod export;
 mod guard;
@@ -18,7 +19,10 @@ mod value;
 mod vault;
 
 pub use driver::{ChunkSink, DatabaseDriver};
-pub use drivers::{MysqlDriver, PostgresDriver, SqliteDriver};
+pub use drivers::{builtin_drivers, MysqlDriver, PostgresDriver, SqliteDriver};
+pub use engines::{
+    builtin_specs, spec as engine_spec, BackupTool, BooleanLiteral, BytesLiteral, EngineSpec,
+};
 pub use error::CoreError;
 pub use export::{js_number, quote_ident, sql_literal, text_literal, ExportFormat, ExportWriter};
 pub use guard::{

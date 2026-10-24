@@ -1,3 +1,4 @@
+import { engineSpec, type EngineSpec } from "../engines";
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen, type EventCallback, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
@@ -7,7 +8,8 @@ import { t } from "./i18n";
 export type DatabaseEngine = "sqlite" | "postgres" | "mysql";
 export type TlsMode = "prefer" | "disable" | "require" | "verify-ca" | "verify-full";
 export type SshAuth = "password" | "key";
-export type BrowseKind = "sqlite" | "certificate" | "key";
+/** A TLS file, or the database file of a file-based engine. */
+export type BrowseKind = "certificate" | "key" | DatabaseEngine;
 
 export type TlsSettings = {
   mode: TlsMode;
@@ -203,9 +205,9 @@ export function formatSqlValue(value: SqlValue | undefined): string {
 
 let identifierQuote = '"';
 
-/** Picks the identifier quote for the open connection. MySQL uses backticks. */
+/** Picks the identifier quote of the open connection's engine. */
 export function setDialect(engine: DatabaseEngine) {
-  identifierQuote = engine === "mysql" ? "`" : '"';
+  identifierQuote = engineSpec(engine).sql.identifierQuote;
 }
 
 export function quoteIdent(value: string): string {
@@ -429,4 +431,9 @@ export function teamUnshare(connectionId: string): Promise<TeamState> {
 
 export function teamSaveQueries(connectionId: string, queries: TeamQuery[]): Promise<TeamState> {
   return invoke("team_save_queries", { connectionId, queries });
+}
+
+/** The engines the backend can open, described by their specs. */
+export function listEngines(): Promise<EngineSpec[]> {
+  return invoke("list_engines");
 }

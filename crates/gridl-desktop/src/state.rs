@@ -3,8 +3,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, RwLock};
 
 use gridl_core::{
-    ConnectionConfig, ConnectionId, CoreError, DatabaseDriver, DatabaseEngine, MysqlDriver,
-    PostgresDriver, SafetySettings, SqliteDriver,
+    ConnectionConfig, ConnectionId, CoreError, DatabaseDriver, DatabaseEngine, SafetySettings,
 };
 
 use crate::tunnel::SshTunnel;
@@ -23,9 +22,8 @@ pub struct Session {
 
 /// Process-wide sessions, cancellation flags, and the credential adapter.
 pub struct AppState {
-    sqlite: SqliteDriver,
-    postgres: PostgresDriver,
-    mysql: MysqlDriver,
+    /// One driver per engine, from `gridl_core::builtin_drivers`.
+    drivers: Vec<Box<dyn DatabaseDriver>>,
     sessions: RwLock<HashMap<String, Session>>,
     tunnels: Mutex<HashMap<String, SshTunnel>>,
     cancels: Mutex<HashMap<String, Arc<AtomicBool>>>,
@@ -40,9 +38,7 @@ pub struct AppState {
 impl AppState {
     pub fn new() -> Self {
         Self {
-            sqlite: SqliteDriver::new(),
-            postgres: PostgresDriver::new(),
-            mysql: MysqlDriver::new(),
+            drivers: gridl_core::builtin_drivers(),
             sessions: RwLock::new(HashMap::new()),
             tunnels: Mutex::new(HashMap::new()),
             cancels: Mutex::new(HashMap::new()),
@@ -54,11 +50,11 @@ impl AppState {
     }
 
     pub fn driver(&self, engine: DatabaseEngine) -> &dyn DatabaseDriver {
-        match engine {
-            DatabaseEngine::Sqlite => &self.sqlite,
-            DatabaseEngine::Postgres => &self.postgres,
-            DatabaseEngine::Mysql => &self.mysql,
-        }
+        self.drivers
+            .iter()
+            .find(|driver| driver.engine() == engine)
+            .map(Box::as_ref)
+            .expect("every engine has a driver in gridl_core::builtin_drivers")
     }
 
     pub fn track(

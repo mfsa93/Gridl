@@ -53,6 +53,7 @@ pub fn run() {
         })
         .on_window_event(windows::on_window_event)
         .invoke_handler(tauri::generate_handler![
+            commands::list_engines,
             commands::connect,
             commands::test_connection,
             commands::disconnect,

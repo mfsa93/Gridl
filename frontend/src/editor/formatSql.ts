@@ -1,3 +1,4 @@
+import { engineSpec } from "../engines";
 import { format } from "sql-formatter";
 import type { DatabaseEngine } from "../lib/api";
 
@@ -13,7 +14,7 @@ const compactWidth = 80;
  * Clauses with several items keep one item per line.
  */
 export function formatSql(source: string, engine: DatabaseEngine): string {
-  const dialect = engine === "postgres" ? "postgresql" : engine === "mysql" ? "mysql" : "sqlite";
+  const dialect = engineSpec(engine).sql.dialect;
   const lines = format(source, { language: dialect, keywordCase: "upper", tabWidth: 2 }).split("\n");
   const indent = (line: string) => line.length - line.trimStart().length;
   const out: string[] = [];

@@ -1,3 +1,4 @@
+import { engineSpec } from "../engines";
 import { CodedError } from "../lib/errors";
 import { t } from "../lib/i18n";
 import { foreignKeyClause, type FkAction } from "./relations";
@@ -32,22 +33,12 @@ export function sizeKind(engine: DatabaseEngine, dataType: string): SizeKind {
 export function referencingType(engine: DatabaseEngine, refType: string): string | null {
   const type = refType.trim().toLowerCase();
   const names = columnTypes(engine);
-  const pick = (name: string) => names.find((item) => item.toLowerCase() === name) ?? null;
-  if (engine === "postgres") {
-    if (type === "serial" || type === "integer" || type === "int4") return pick("integer");
-    if (type === "bigserial" || type === "bigint" || type === "int8") return pick("bigint");
-    if (type === "smallserial" || type === "smallint") return pick("smallint");
-    if (type === "uuid") return pick("uuid");
-    if (type === "text") return pick("text");
-    if (type.startsWith("character varying")) return pick("varchar");
-    return null;
+  const pick = (name: string) => names.find((item) => item.toLowerCase() === name.toLowerCase()) ?? null;
+  const { referenceRules, referenceFallback } = engineSpec(engine).structure;
+  for (const [pattern, target] of referenceRules) {
+    if (new RegExp(pattern, "i").test(type)) return pick(target);
   }
-  if (engine === "mysql") {
-    if (type === "serial" || type.startsWith("bigint unsigned") || type.startsWith("bigint(20) unsigned")) return pick("bigint unsigned");
-    const base = type.replace(/\(.*\)/, "").trim();
-    return pick(base);
-  }
-  return pick(type) ?? pick("integer");
+  return pick(type) ?? pick(type.replace(/\(.*\)/, "").trim()) ?? (referenceFallback ? pick(referenceFallback) : null);
 }
 
 export function isGeneratedType(engine: DatabaseEngine, dataType: string): boolean {
@@ -91,62 +82,8 @@ type ColumnTypeSpec = {
   generated?: boolean;
 };
 
-const postgresTypes: ColumnTypeSpec[] = [
-  { name: "text", kind: "plain" },
-  { name: "varchar", kind: "length" },
-  { name: "char", kind: "length" },
-  { name: "smallint", kind: "plain" },
-  { name: "integer", kind: "plain" },
-  { name: "bigint", kind: "plain" },
-  { name: "serial", kind: "plain", generated: true },
-  { name: "bigserial", kind: "plain", generated: true },
-  { name: "boolean", kind: "plain" },
-  { name: "numeric", kind: "numeric" },
-  { name: "real", kind: "plain" },
-  { name: "double precision", kind: "plain" },
-  { name: "date", kind: "plain" },
-  { name: "time", kind: "plain" },
-  { name: "timestamp", kind: "plain" },
-  { name: "timestamptz", kind: "plain" },
-  { name: "interval", kind: "plain" },
-  { name: "uuid", kind: "plain" },
-  { name: "json", kind: "plain" },
-  { name: "jsonb", kind: "plain" },
-  { name: "bytea", kind: "plain" },
-];
 
-const sqliteTypes: ColumnTypeSpec[] = [
-  { name: "TEXT", kind: "plain" },
-  { name: "INTEGER", kind: "plain" },
-  { name: "REAL", kind: "plain" },
-  { name: "NUMERIC", kind: "plain" },
-  { name: "BLOB", kind: "plain" },
-];
 
-const mysqlTypes: ColumnTypeSpec[] = [
-  { name: "varchar", kind: "length" },
-  { name: "char", kind: "length" },
-  { name: "text", kind: "plain" },
-  { name: "mediumtext", kind: "plain" },
-  { name: "longtext", kind: "plain" },
-  { name: "tinyint", kind: "plain" },
-  { name: "smallint", kind: "plain" },
-  { name: "int", kind: "plain" },
-  { name: "bigint", kind: "plain" },
-  { name: "bigint unsigned", kind: "plain" },
-  { name: "serial", kind: "plain", generated: true },
-  { name: "boolean", kind: "plain" },
-  { name: "decimal", kind: "numeric" },
-  { name: "float", kind: "plain" },
-  { name: "double", kind: "plain" },
-  { name: "date", kind: "plain" },
-  { name: "time", kind: "plain" },
-  { name: "datetime", kind: "plain" },
-  { name: "timestamp", kind: "plain" },
-  { name: "json", kind: "plain" },
-  { name: "blob", kind: "plain" },
-  { name: "longblob", kind: "plain" },
-];
 
 const postgresCasts: Record<string, string> = {
   text: "text",
@@ -169,9 +106,7 @@ const postgresCasts: Record<string, string> = {
 };
 
 export function columnTypeSpecs(engine: DatabaseEngine): ColumnTypeSpec[] {
-  if (engine === "postgres") return postgresTypes;
-  if (engine === "mysql") return mysqlTypes;
-  return sqliteTypes;
+  return engineSpec(engine).structure.columnTypes;
 }
 
 export function columnTypes(engine: DatabaseEngine): string[] {
@@ -218,7 +153,7 @@ export function addColumnSql(table: TableSchema, column: AddedColumn, engine: Da
     }
   }
   if (column.unique) {
-    if (engine === "sqlite") throw new Error(t("changes.sqliteNoUniqueOnAdd"));
+    if (!engineSpec(engine).structure.uniqueOnAdd) throw new Error(t("changes.noUniqueOnAdd", { engine: engineSpec(engine).name }));
     parts.push("unique");
   }
   return parts.join(" ");
@@ -341,10 +276,10 @@ export function columnChangeSql(table: TableSchema, rows: ColumnDraft[], engine:
     const nullDiff = row.nullable !== row.originalNullable;
     const defaultDiff = row.defaultValue.trim() !== row.originalDefault.trim();
     if (!typeDiff && !nullDiff && !defaultDiff) continue;
-    if (engine === "sqlite") throw new Error(t("changes.sqliteOnlyRenameAddDrop"));
+    if (!engineSpec(engine).structure.alterColumns) throw new Error(t("changes.onlyRenameAddDrop", { engine: engineSpec(engine).name }));
     const current = quoteIdent(next);
-    if (engine === "mysql") {
-      statements.push(mysqlModifySql(qualified, current, row, typeDiff));
+    if (engineSpec(engine).structure.ddl === "mysql") {
+      statements.push(mysqlModifySql(engine, qualified, current, row, typeDiff));
       continue;
     }
     if (typeDiff) {
@@ -369,10 +304,10 @@ export function columnChangeSql(table: TableSchema, rows: ColumnDraft[], engine:
   return statements;
 }
 
-/** MySQL restates the whole column definition, so type, nullability, and default go together. */
-function mysqlModifySql(qualified: string, column: string, row: ColumnDraft, typeDiff: boolean): string {
-  const spec = mysqlTypes.find((item) => item.name === row.dataType);
-  const type = spec ? columnTypeClause(spec, addedFrom(row)) : typeDiff ? draftTypeClause(row, "mysql") : row.dataType;
+/** The MySQL style restates the whole column definition, so type, nullability, and default go together. */
+function mysqlModifySql(engine: DatabaseEngine, qualified: string, column: string, row: ColumnDraft, typeDiff: boolean): string {
+  const spec = columnTypeSpecs(engine).find((item) => item.name === row.dataType);
+  const type = spec ? columnTypeClause(spec, addedFrom(row)) : typeDiff ? draftTypeClause(row, engine) : row.dataType;
   const parts = [`alter table ${qualified} modify column ${column} ${type}`, row.nullable ? "null" : "not null"];
   const fallback = row.defaultValue.trim();
   if (fallback.toLowerCase() === "auto_increment") parts.push("auto_increment");
@@ -410,8 +345,9 @@ export function createTableSql(schema: string | null, tableName: string, columns
       defaultValue: column.defaultValue,
     };
     let type = columnTypeClause(spec, sizedColumn);
-    // MySQL rejects VARCHAR without a length.
-    if (engine === "mysql" && spec.kind === "length" && !first) type = `${spec.name}(255)`;
+    // Engines with a length hint reject VARCHAR without a length.
+    const hint = engineSpec(engine).structure.lengthHint;
+    if (hint && spec.kind === "length" && !first) type = `${spec.name}(${hint})`;
     const parts = [`${quoteIdent(column.name)} ${type}`];
     if (!spec.generated) {
       const fallback = defaultClause(column.defaultValue);
@@ -456,7 +392,7 @@ export function insertSql(
     values.push(bind(engine, params, value, column));
   }
   if (names.length === 0) {
-    const empty = engine === "mysql" ? "() values ()" : "default values";
+    const empty = engineSpec(engine).sql.emptyInsert;
     return { sql: `insert into ${qualifiedName(table)} ${empty}`, params };
   }
   return {
@@ -537,8 +473,8 @@ export function routineCallSql(routine: TableSchema, engine: DatabaseEngine): st
   const passed = routine.columns.filter((column) => !(routine.kind === "function" && column.mode === "OUT"));
   const last = passed.length - 1;
   const args = passed.map((column, index) => {
-    // MySQL hands OUT and INOUT values back through session variables.
-    const value = engine === "mysql" && outputs(column.mode) ? `@${/^\w+$/.test(column.name) ? column.name : quoteIdent(column.name)}` : (column.defaultValue ?? "NULL");
+    // Some engines hand OUT and INOUT values back through session variables.
+    const value = engineSpec(engine).sql.outParamVariables && outputs(column.mode) ? `@${/^\w+$/.test(column.name) ? column.name : quoteIdent(column.name)}` : (column.defaultValue ?? "NULL");
     const mode = column.mode && column.mode !== "IN" ? ` ${column.mode}` : "";
     return `  ${value}${index < last ? "," : ""} -- ${column.name} ${column.dataType}${mode}`;
   });
@@ -766,8 +702,8 @@ function bind(engine: DatabaseEngine, params: SqlValue[], value: SqlValue, colum
   const keyword = temporalKeyword(engine, column, value);
   if (keyword) return keyword;
   params.push(value);
-  const token = engine === "postgres" ? `$${params.length}` : "?";
-  if (engine !== "postgres") return token;
+  const token = engineSpec(engine).sql.params === "dollar" ? `$${params.length}` : "?";
+  if (!engineSpec(engine).sql.paramCasts) return token;
   const cast = postgresCast(column.dataType) ?? (columnOptions(column).length > 0 ? quoteTypeName(column.dataType) : null);
   return cast ? `${token}::${cast}` : token;
 }
@@ -800,14 +736,10 @@ function temporalKeyword(engine: DatabaseEngine, column: ColumnDefinition, value
   if (marker === "null" && isTemporalColumn(column)) return "NULL";
   if (!isTemporalColumn(column) || marker !== "now()") return null;
   const kind = temporalKind(column);
-  if (engine === "sqlite") {
-    if (kind === "date") return "date('now')";
-    if (kind === "time") return "time('now')";
-    return "datetime('now')";
-  }
-  if (kind === "date") return "current_date";
-  if (kind === "time") return "current_time";
-  return "now()";
+  const [date, time, timestamp] = engineSpec(engine).sql.now;
+  if (kind === "date") return date;
+  if (kind === "time") return time;
+  return timestamp;
 }
 
 function valuesEqual(left: SqlValue | undefined, right: SqlValue): boolean {

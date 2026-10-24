@@ -620,11 +620,13 @@ async fn open_link(
 }
 
 fn default_port(engine: DatabaseEngine) -> u16 {
-    match engine {
-        DatabaseEngine::Postgres => 5432,
-        DatabaseEngine::Mysql => 3306,
-        DatabaseEngine::Sqlite => 0,
-    }
+    gridl_core::engine_spec(engine).connection.default_port.unwrap_or(0)
+}
+
+/// The engines this build supports, as the frontend describes them.
+#[tauri::command]
+pub fn list_engines() -> Vec<gridl_core::EngineSpec> {
+    gridl_core::builtin_specs()
 }
 
 async fn take_or_load(

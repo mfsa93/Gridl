@@ -1,3 +1,4 @@
+import { engineSpec } from "../engines";
 import type { DatabaseEngine } from "./api";
 import { t } from "./i18n";
 
@@ -49,7 +50,7 @@ function cleanMessage(raw: string): string {
 
 function hintFor(message: string, code: ErrorCode | null, sql: string | null, engine: DatabaseEngine): string | null {
   const missingColumn = /column "([^"]+)" does not exist/i.exec(message);
-  if (missingColumn && sql && sql.includes(`"${missingColumn[1]}"`) && engine !== "mysql") {
+  if (missingColumn && sql && sql.includes(`"${missingColumn[1]}"`) && engineSpec(engine).sql.identifierQuote === '"') {
     return t("hint.doubleQuotes", { value: missingColumn[1] });
   }
   if (code === "blocked") return t("hint.blocked");

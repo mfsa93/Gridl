@@ -1,3 +1,4 @@
+import { engineSpec } from "./engines";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { ArchiveRestore, ArrowLeft, Bookmark, Braces, CircleStop, FileCode, GitCompareArrows, Link2, Network, Route, Undo2, Database, Eye, FastForward, Folder, PanelLeft, Pencil, Play, Plus, Search, TerminalSquare, Trash2, Upload, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -259,6 +260,7 @@ export function App() {
     return { key: connectionId, engine: active.engine, check: (sql: string) => checkSql(connectionId, sql) };
   }, [active]);
   const engine: DatabaseEngine = active?.engine ?? "sqlite";
+  const engineInfo = engineSpec(engine);
   const safety = active?.safety ?? defaultSafety;
   /** Row edits are off when the connection is read-only or its policy blocks writes. */
   const editLocked = Boolean(active?.readOnly) || safety.writes === "block";
@@ -467,11 +469,11 @@ export function App() {
   }, []);
 
   const browse = async (kind: BrowseKind) => {
-    const filters = {
-      sqlite: [{ name: "SQLite", extensions: ["sqlite", "sqlite3", "db"] }],
-      certificate: [{ name: t("app.browse.certificate"), extensions: ["crt", "pem", "cer"] }],
-      key: [{ name: t("app.browse.key"), extensions: ["pem", "key"] }],
-    }[kind];
+    const filters = kind === "certificate"
+      ? [{ name: t("app.browse.certificate"), extensions: ["crt", "pem", "cer"] }]
+      : kind === "key"
+        ? [{ name: t("app.browse.key"), extensions: ["pem", "key"] }]
+        : [{ name: engineSpec(kind).name, extensions: engineSpec(kind).connection.fileExtensions }];
     const selected = await open({ multiple: false, directory: false, filters });
     return typeof selected === "string" ? selected : null;
   };
@@ -516,7 +518,7 @@ export function App() {
     setViews(Object.fromEntries(sqlIds.map((id) => [id, emptyView(t("app.empty.start"))])));
     pendingLoads.current = tabs.filter((tab) => showsRows(tab.table)).map((tab) => tab.table);
     setDbSchemas(namesFromTables(nextTables));
-    if (config.engine === "postgres") void readSchemas(config.id).then(setDbSchemas).catch(() => undefined);
+    if (engineSpec(config.engine).structure.schemas) void readSchemas(config.id).then(setDbSchemas).catch(() => undefined);
     setScreen("workspace");
   };
 
@@ -721,7 +723,7 @@ export function App() {
         if (!current) return current;
         return next.find((table) => tableTabId(table) === tableTabId(current)) ?? current;
       });
-      if (active.engine === "postgres") setDbSchemas(await readSchemas(active.id));
+      if (engineSpec(active.engine).structure.schemas) setDbSchemas(await readSchemas(active.id));
     } catch (caught) {
       setViews((current) => ({
         ...current,
@@ -1422,7 +1424,7 @@ export function App() {
     if (active) writeSchemaView(active.id, { schema: name || activeSchema, all });
   };
   /** Searching looks through every schema, so a match in another one is never hidden. */
-  const schemaTree = engine === "postgres" && (allSchemas || Boolean(needle));
+  const schemaTree = engineInfo.structure.schemas && (allSchemas || Boolean(needle));
   const searched = tables.filter((table) => {
     if (!needle) return true;
     return table.name.toLowerCase().includes(needle) || (table.schema ?? "").toLowerCase().includes(needle);
@@ -1437,7 +1439,7 @@ export function App() {
   };
 
   const renderGroups = (schema: string | null, groupDepth: string, leafDepth: string) => {
-    const owned = searched.filter((table) => (engine === "postgres" ? table.schema === schema : true));
+    const owned = searched.filter((table) => (engineInfo.structure.schemas ? table.schema === schema : true));
     const tableKey = `tables:${schema ?? "main"}`;
     const tableRows = owned.filter((table) => table.kind === "table");
     return (
@@ -1454,7 +1456,7 @@ export function App() {
                 type="button"
                 className="tiny-icon"
                 aria-label={t("app.explorer.newTable")}
-                disabled={structureLocked || running || (engine === "postgres" && !schema)}
+                disabled={structureLocked || running || (engineInfo.structure.schemas && !schema)}
                 onClick={() => {
                   if (schema) setSchemaChoice(schema);
                   openDialog({ kind: "create-table" });
@@ -1584,7 +1586,7 @@ export function App() {
 
   const submitTable = async (name: string, columns: Parameters<typeof createTableSql>[2]) => {
     try {
-      const sql = createTableSql(engine === "postgres" ? activeSchema || null : null, name, columns, engine);
+      const sql = createTableSql(engineInfo.structure.schemas ? activeSchema || null : null, name, columns, engine);
       const ok = await runWrite(sql);
       if (!ok) return;
       setDialog(null);
@@ -1862,8 +1864,8 @@ export function App() {
     if (!active) return;
     setBackupMenu(false);
     const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-");
-    const base = (active.engine === "sqlite" ? active.database.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, "") : active.database) || t("app.backup.defaultName");
-    const extension = active.engine === "sqlite" ? "sqlite" : "sql";
+    const base = (engineSpec(active.engine).connection.fileBased ? active.database.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, "") : active.database) || t("app.backup.defaultName");
+    const extension = engineSpec(active.engine).tools.backup === "vacuum-into" ? "sqlite" : "sql";
     const path = await save({ defaultPath: `${base}-${stamp}.${extension}`, filters: [{ name: t("app.backup.filter"), extensions: [extension] }] });
     if (!path) return;
     setBackupNote(t("app.backup.creating"));
@@ -2134,9 +2136,9 @@ export function App() {
 
   const hostLine = !active
     ? ""
-    : active.engine === "sqlite"
+    : engineSpec(active.engine).connection.fileBased
       ? active.database
-      : `${active.host ?? "localhost"}:${active.port ?? (active.engine === "mysql" ? 3306 : 5432)}`;
+      : `${active.host ?? "localhost"}:${active.port ?? engineSpec(active.engine).connection.defaultPort ?? ""}`;
   const focusView = views[activeTabId];
   const focusedValues = (() => {
     if (!focusedRow || focusedRow.tab !== activeTabId || !focusView || focusView.columns.length === 0) return null;
@@ -2257,7 +2259,7 @@ export function App() {
             {backupMenu ? (
               <div className="popover-menu" onMouseLeave={() => setBackupMenu(false)}>
                 <button type="button" onClick={() => void runBackup()}>{t("app.backup.create")}</button>
-                <button type="button" disabled={active?.engine === "sqlite" || structureLocked} onClick={() => void runRestore()}>{t("app.backup.restore")}</button>
+                <button type="button" disabled={!active || !engineSpec(active.engine).tools.restore || structureLocked} onClick={() => void runRestore()}>{t("app.backup.restore")}</button>
               </div>
             ) : null}
           </div>
@@ -2289,7 +2291,7 @@ export function App() {
             <Search size={14} />
             <input value={objectQuery} placeholder={t("app.explorer.search")} onChange={(event) => setObjectQuery(event.target.value)} />
           </div>
-          {engine === "postgres" ? (
+          {engineInfo.structure.schemas ? (
             <div className="schema-bar">
               <SchemaPicker
                 schemas={schemaNames}
@@ -2315,7 +2317,7 @@ export function App() {
             </div>
           ) : null}
           <div className="tree-section">
-            {engine === "postgres" && !schemaTree ? (
+            {engineInfo.structure.schemas && !schemaTree ? (
               activeSchema ? renderGroups(activeSchema, "depth-0", "depth-1") : <div className="tree-item depth-0">{t("app.explorer.noSchemas")}</div>
             ) : (
             <TreeBranch
@@ -2325,7 +2327,7 @@ export function App() {
               open={branchOpen("db", true)}
               onToggle={() => toggleBranch("db", true)}
             >
-              {engine === "postgres" ? (
+              {engineInfo.structure.schemas ? (
                 schemaNames.filter((name) => !needle || searched.some((table) => table.schema === name) || name.toLowerCase().includes(needle)).map((name) => {
                   const key = `schema:${name}`;
                   const fallback = name === activeSchema;
@@ -2358,7 +2360,7 @@ export function App() {
                   );
                 })
               ) : renderGroups(null, "depth-1", "depth-2")}
-              {engine === "postgres" && schemaNames.length === 0 ? <div className="tree-item depth-1">{t("app.explorer.noSchemas")}</div> : null}
+              {engineInfo.structure.schemas && schemaNames.length === 0 ? <div className="tree-item depth-1">{t("app.explorer.noSchemas")}</div> : null}
             </TreeBranch>
             )}
             {savedQueries.length > 0 ? (
@@ -2518,9 +2520,11 @@ export function App() {
                   >
                     <Link2 size={14} /> {t("app.link.copy")}
                   </button>
-                  <button type="button" className="toolbar-button" title={t("app.plan.buttonTitle")} disabled={!active || running || busy} onClick={() => void explainQuery(tab)}>
-                    <Route size={14} /> {t("app.plan.button")}
-                  </button>
+                  {engineInfo.tools.explain ? (
+                    <button type="button" className="toolbar-button" title={t("app.plan.buttonTitle")} disabled={!active || running || busy} onClick={() => void explainQuery(tab)}>
+                      <Route size={14} /> {t("app.plan.button")}
+                    </button>
+                  ) : null}
                   <button type="button" className="toolbar-button" title={t("app.editor.formatTitle")} onClick={() => formatEditor(tab)}>
                     <Braces size={14} /> {t("app.editor.format")} <kbd>{formatShortcut}</kbd>
                   </button>
@@ -2904,8 +2908,8 @@ export function App() {
       ) : null}
       {diagramOpen ? (
         <ErDiagram
-          title={engine === "postgres" && !allSchemas ? activeSchema : (active?.database ?? "")}
-          tables={engine === "postgres" && !allSchemas ? tables.filter((table) => table.schema === activeSchema) : tables}
+          title={engineInfo.structure.schemas && !allSchemas ? activeSchema : (active?.database ?? "")}
+          tables={engineInfo.structure.schemas && !allSchemas ? tables.filter((table) => table.schema === activeSchema) : tables}
           keys={foreignKeys}
           onOpen={(table) => {
             setDiagramOpen(false);
@@ -3001,7 +3005,7 @@ export function App() {
         <PreviewDialog statements={preview} busy={running} error={formError} onClose={() => setPreview(null)} onApply={() => void saveEdits()} />
       ) : null}
       {dialog?.kind === "create-table" ? (
-        <TableDialog engine={engine} schema={engine === "postgres" ? activeSchema : null} tables={tables} busy={running} error={formError} onClose={() => setDialog(null)} onSubmit={(name, columns) => void submitTable(name, columns)} />
+        <TableDialog engine={engine} schema={engineInfo.structure.schemas ? activeSchema : null} tables={tables} busy={running} error={formError} onClose={() => setDialog(null)} onSubmit={(name, columns) => void submitTable(name, columns)} />
       ) : null}
     </div>
   );

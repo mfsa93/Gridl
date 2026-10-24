@@ -1,3 +1,4 @@
+import { engineSpec } from "../engines";
 import { formatSqlValue, qualifiedName, type ColumnDefinition, type DatabaseEngine, type SqlValue, type TableSchema } from "../lib/api";
 import { isGeneratedColumn, canonicalTemporal, isTemporalColumn, type CellField } from "./changes";
 import { type ShownError } from "../lib/errors";
@@ -57,11 +58,12 @@ export const largeTableRows = 500_000;
 
 /** Reads the catalog's row estimate for `table`, or null when the engine keeps none. */
 export function rowEstimateSql(table: TableSchema, engine: DatabaseEngine): string | null {
-  if (engine === "postgres") {
+  const source = engineSpec(engine).tools.rowEstimate;
+  if (source === "pg-class") {
     // reltuples is -1 until the table is first analyzed, and 0 for plain views.
     return `select reltuples::bigint from pg_catalog.pg_class where oid = to_regclass('${qualifiedName(table).replaceAll("'", "''")}')`;
   }
-  if (engine === "mysql") {
+  if (source === "information-schema") {
     const hex = (text: string) => Array.from(new TextEncoder().encode(text), (byte) => byte.toString(16).padStart(2, "0")).join("");
     return `select table_rows from information_schema.tables where table_schema = convert(X'${hex(table.schema ?? "")}' using utf8mb4) and table_name = convert(X'${hex(table.name)}' using utf8mb4)`;
   }
