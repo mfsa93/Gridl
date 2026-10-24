@@ -257,5 +257,5 @@ export function namesFromTables(list: TableSchema[]): string[] {
 }
 
 export function kindLabel(kind: TableSchema["kind"]) {
-  return objectGroups.find((group) => group.kind === kind)?.label ?? kind;
+  return t(`model.kind.${kind}`);
 }

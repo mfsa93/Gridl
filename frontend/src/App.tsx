@@ -2,6 +2,7 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import { ArchiveRestore, ArrowLeft, Braces, Database, Eye, FastForward, Folder, PanelLeft, Pencil, Play, Plus, Search, TerminalSquare, Trash2, Upload, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { splitStatements } from "./editor/activeSql";
+import { SqlDefinition } from "./editor/SqlDefinition";
 import { SqlEditor, type SqlEditorHandle } from "./editor/SqlEditor";
 import { ResultGrid, type GridRangeActions } from "./grid/ResultGrid";
 import type { ConnectingState } from "./home/ConnectingStatus";
@@ -9,7 +10,7 @@ import { ConnectionHome, type HomeCommand } from "./home/ConnectionHome";
 import { UpdateCenter } from "./home/UpdateCenter";
 import { toConfig, type Draft } from "./home/draft";
 import { cancelQuery, connect, createGroup, deleteGroup, deleteProfile, disconnect, errorMessage, checkSql, defaultSafety, executeBatch, GuardError, executeQuery, exportQuery, importCsv, backupDatabase, restoreDatabase, formatSqlValue, introspect, listForeignKeys, listProfiles, closeDiscarding, listenHere, openConnectionWindow, openHomeWindow, quitDiscarding, setUnsaved, qualifiedName, quoteIdent, saveConnection, setDialect, testConnection, writeExport, type BatchStatement, type BrowseKind, type ColumnDefinition, type ConnectionCatalog, type ConnectionConfig, type DatabaseEngine, type ForeignKey, type GuardInfo, type SqlValue, type TableSchema, type TestResult } from "./lib/api";
-import { canEditRows, createSchemaSql, createTableSql, deleteSql, dropSchemaSql, insertSql, listSchemasSql, primaryKeys, renameSchemaSql, rowRecord, schemaNameFrom, updateSql, type ColumnDraft } from "./workspace/changes";
+import { canEditRows, createSchemaSql, createTableSql, deleteSql, dropSchemaSql, insertSql, listSchemasSql, renameSchemaSql, routineCallSql, rowRecord, schemaNameFrom, updateSql, type ColumnDraft } from "./workspace/changes";
 import { CodedError, describeError, errorCode, isConnectionLost, type ShownError } from "./lib/errors";
 import { formatNumber, formatTime, plural, t } from "./lib/i18n";
 import { ConfirmDialog, NameDialog, TableDialog } from "./workspace/dialogs";
@@ -17,10 +18,10 @@ import { exportRows, sqlLiteral, toTsv, type ExportFormat } from "./workspace/ex
 import { nextSort, orderClause, whereClause, type TableFilter } from "./workspace/filters";
 import { clearHistory, forgetHistory, pushHistory, readHistory, removeHistory, toggleStar, type HistoryEntry } from "./workspace/history";
 import { environmentLabel } from "./lib/environments";
-import { ContextMenu, ErrorPanel, GuardDialog, UnsavedDialog, ExportMenu, type MenuItem, FilterBar, FilterToggle, HistoryMenu, PreviewDialog, ResultMessage, RowDetails } from "./workspace/panels";
+import { ContextMenu, CopyButton, ErrorPanel, GuardDialog, UnsavedDialog, ExportMenu, type MenuItem, FilterBar, FilterToggle, HistoryMenu, PreviewDialog, ResultMessage, RoutineSummary, RowDetails } from "./workspace/panels";
 import { ImportDialog, type ImportPlan } from "./workspace/ImportDialog";
 import { RelationsPanel } from "./workspace/RelationsPanel";
-import { findTable, keyForColumn, outgoingKeys, incomingKeys, refLabel, resolvedRefColumns } from "./workspace/relations";
+import { findTable, keyForColumn, outgoingKeys, resolvedRefColumns } from "./workspace/relations";
 import { SchemaPicker } from "./workspace/SchemaPicker";
 import { StructureEditor } from "./workspace/StructureEditor";
 import { kindLabel, pageSizes, sqlTabId, countValue, clonePending, pendingEmpty, viewKey, viewLabel, primaryKeyList, emptyView, tableTabId, showsRows, objectGroups, schemaMap, describeTabChanges, pendingSummary, pastedRow, isHeaderRow, mergeColumns, structureKey, sameDisplayedRow, fieldsFromValues, fieldsFromDraft, namesFromTables, type TableQuery, type TablePage, type TabView, type TableTab, type PendingChanges, type PageStash, type UndoEntry, type WorkspaceDialog } from "./workspace/model";
@@ -79,7 +80,6 @@ export function App() {
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [preview, setPreview] = useState<BatchStatement[] | null>(null);
   const [focusedRow, setFocusedRow] = useState<{ tab: string; row: number } | null>(null);
-  const [detailsTab, setDetailsTab] = useState<"row" | "structure">("row");
   /** Unapplied column edits per table tab, tagged with the schema they were made against. */
   const [structureDrafts, setStructureDrafts] = useState<Record<string, { signature: string; rows: ColumnDraft[] }>>({});
   const [stashes, setStashes] = useState<Record<string, PageStash[]>>({});
@@ -1830,7 +1830,6 @@ export function App() {
     return items;
   };
 
-  const showRow = focusedValues !== null && focusView !== undefined && (detailsTab === "row" || !detailTable);
 
   return (
     <div className="workspace-shell">
@@ -2157,7 +2156,12 @@ export function App() {
                     ) : null}
                   </div>
                 ) : showsRows(activeTable.table) ? null : (
-                  <span>{kindLabel(activeTable.table.kind)}</span>
+                  <div>
+                    <span className="toolbar-kind">{kindLabel(activeTable.table.kind)}</span>
+                    {activeTable.table.definition ? (
+                      <CopyButton text={activeTable.table.definition} label={t("app.definition.copy")} title={t("app.definition.copyTitle")} />
+                    ) : null}
+                  </div>
                 )}
               </div>
               {showsRows(activeTable.table) && tablePane === "rows" && filterOpen[activeTable.id] ? (
@@ -2230,7 +2234,22 @@ export function App() {
                   tableView.error ? <ErrorPanel error={tableView.error} action={reconnectAction(tableView.error)} /> : <div className="results-empty">{tableView.status || t("app.status.loading")}</div>
                 )
               ) : (
-                <pre className="definition-view">{activeTable.table.definition || t("app.definition.none")}</pre>
+                <>
+                  {activeTable.table.kind === "function" || activeTable.table.kind === "procedure" ? (
+                    <RoutineSummary
+                      routine={activeTable.table}
+                      onUse={() => {
+                        setActiveTabId(sqlTabId);
+                        editorRef.current?.insertSql(routineCallSql(activeTable.table, engine));
+                      }}
+                    />
+                  ) : null}
+                  {activeTable.table.definition ? (
+                    <SqlDefinition sql={activeTable.table.definition} engine={engine} />
+                  ) : (
+                    <pre className="definition-view">{t("app.definition.none")}</pre>
+                  )}
+                </>
               )}
               {tablePane === "structure" && structureTable && !structureLocked ? null : !writable && showsRows(activeTable.table) ? (
                 <div className="editor-status">
@@ -2279,18 +2298,9 @@ export function App() {
         />
         <aside className="details-panel">
           <div className="details-heading">
-            {focusedValues !== null && detailTable ? (
-              <div className="view-switch" role="tablist">
-                <button type="button" className={showRow ? "active" : undefined} onClick={() => setDetailsTab("row")}>{t("app.details.row")}</button>
-                <button type="button" className={showRow ? undefined : "active"} onClick={() => setDetailsTab("structure")}>
-                  {detailTable.kind === "function" || detailTable.kind === "procedure" ? t("app.details.arguments") : t("app.details.structure")}
-                </button>
-              </div>
-            ) : (
-              <span>{focusedValues !== null ? t("app.details.row") : detailTable && (detailTable.kind === "function" || detailTable.kind === "procedure") ? t("app.details.arguments") : t("app.details.structure")}</span>
-            )}
+            <span>{t("app.details.row")}</span>
           </div>
-          {showRow && focusedRow && focusView ? (
+          {focusedValues !== null && focusedRow && focusView ? (
             <RowDetails
               columns={focusView.columns}
               row={focusedValues}
@@ -2303,38 +2313,6 @@ export function App() {
                 return { label: key.refTable, open: () => openReferenced(key, focusView.columns, focusedValues) };
               }}
             />
-          ) : detailTable ? (
-            <div className="details-body">
-              <strong>{detailTable.schema ? `${detailTable.schema}.${detailTable.name}` : detailTable.name}</strong>
-              <span>{detailTable.kind}{primaryKeys(detailTable).length > 0 ? ` · ${t("app.details.primaryKey", { columns: primaryKeys(detailTable).map((column) => column.name).join(", ") })}` : ` · ${t("app.details.noPrimaryKey")}`}</span>
-              <ul className="column-list">
-                {detailTable.columns.map((column) => (
-                  <li key={column.name}>
-                    <span>{column.name}{column.primaryKey ? " · pk" : ""}</span>
-                    <span title={(column.options ?? []).join(", ") || undefined}>{column.dataType}{(column.options ?? []).length > 0 ? ` · ${column.options.join(", ")}` : ""}</span>
-                  </li>
-                ))}
-              </ul>
-              {detailTable.kind === "table" && (outgoingKeys(foreignKeys, detailTable).length > 0 || incomingKeys(foreignKeys, detailTable).length > 0) ? (
-                <>
-                  <span className="details-subhead">{t("app.details.relations")}</span>
-                  <ul className="column-list relation-list">
-                    {outgoingKeys(foreignKeys, detailTable).map((key) => (
-                      <li key={`out:${key.name}`}>
-                        <span>{key.columns.join(", ")}</span>
-                        <button type="button" className="relation-link" onClick={() => openTableNamed(key.refSchema, key.refTable)}>→ {refLabel(key, tables)}</button>
-                      </li>
-                    ))}
-                    {incomingKeys(foreignKeys, detailTable).map((key) => (
-                      <li key={`in:${key.table}:${key.name}`}>
-                        <button type="button" className="relation-link" onClick={() => openTableNamed(key.schema, key.table)}>← {key.table}</button>
-                        <span>{key.columns.join(", ")}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </>
-              ) : null}
-            </div>
           ) : (
             <div className="details-empty">
               <div className="details-orb">

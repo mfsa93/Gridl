@@ -311,6 +311,7 @@ mod tests {
             primary_key: false,
             default_value: None,
             options: Vec::new(),
+            mode: None,
         }
     }
 

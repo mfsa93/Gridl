@@ -1,6 +1,6 @@
-import { ArrowUpRight, CircleAlert, Copy, ShieldAlert, ShieldX, TriangleAlert, Download, Filter, History, Plus, Star, Trash2, X } from "lucide-react";
+import { ArrowUpRight, Check, CircleAlert, Copy, Search, ShieldAlert, SquareTerminal, ShieldX, TriangleAlert, Download, Filter, History, Plus, Star, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { formatSqlValue, type BatchStatement, type ColumnDefinition, type SqlValue } from "../lib/api";
+import { formatSqlValue, type BatchStatement, type ColumnDefinition, type SqlValue, type TableSchema } from "../lib/api";
 import { exportFormats, type ExportFormat } from "./export";
 import { blankFilter, filterOps, opTakesValue, type FilterOp, type TableFilter } from "./filters";
 import type { ShownError } from "../lib/errors";
@@ -296,32 +296,113 @@ export function RowDetails({
   /** A link to the referenced row when the column is a foreign key. */
   relation?: (column: string) => { label: string; open: () => void } | null;
 }) {
+  const [query, setQuery] = useState("");
+  const needle = query.trim().toLowerCase();
+  const fields = columns.map((column, position) => ({ column, position })).filter(({ column }) => !needle || column.name.toLowerCase().includes(needle));
   return (
-    <div className="details-body row-details">
-      <strong>{t("panel.row.title", { number: index + 1 })}</strong>
-      <dl className="row-fields-list">
-        {columns.map((column, position) => {
-          const shown = prettyValue(row[position]);
-          const link = shown.isNull ? null : (relation?.(column.name) ?? null);
-          return (
-            <div key={`${position}:${column.name}`} className="row-field">
-              <dt>
-                <span>{column.name}</span>
-                <button type="button" className="tiny-icon" aria-label={t("panel.row.copy", { column: column.name })} onClick={() => void navigator.clipboard?.writeText(shown.isNull ? "" : shown.text)}>
-                  <Copy size={12} />
-                </button>
-              </dt>
-              <dd className={shown.isNull ? "null" : shown.json ? "json" : undefined}>{shown.text}</dd>
-              {link ? (
-                <button type="button" className="relation-link row-jump" onClick={link.open}>
-                  {t("panel.row.openIn", { table: link.label })} <ArrowUpRight size={12} />
-                </button>
-              ) : null}
+    <>
+      <div className="row-details-head">
+        <strong>{t("panel.row.title", { number: index + 1 })}</strong>
+        {columns.length > 8 ? (
+          <div className="explorer-search row-search">
+            <Search size={13} />
+            <input value={query} placeholder={t("panel.row.search")} aria-label={t("panel.row.search")} onChange={(event) => setQuery(event.target.value)} />
+          </div>
+        ) : null}
+      </div>
+      <div className="details-body row-details">
+        {fields.length === 0 ? <span className="relation-empty plain">{t("panel.row.noMatch")}</span> : null}
+        <dl className="row-fields-list" hidden={fields.length === 0}>
+          {fields.map(({ column, position }) => {
+            const shown = prettyValue(row[position]);
+            const link = shown.isNull ? null : (relation?.(column.name) ?? null);
+            return (
+              <div key={`${position}:${column.name}`} className="row-field">
+                <dt>
+                  <span className="row-field-name">
+                    {column.name}
+                    {column.dataType ? <small>{column.dataType}</small> : null}
+                  </span>
+                  <button type="button" className="tiny-icon" aria-label={t("panel.row.copy", { column: column.name })} onClick={() => void navigator.clipboard?.writeText(shown.isNull ? "" : shown.text)}>
+                    <Copy size={12} />
+                  </button>
+                </dt>
+                <dd className={shown.isNull ? "null" : shown.json ? "json" : undefined}>{shown.text}</dd>
+                {link ? (
+                  <button type="button" className="relation-link row-jump" onClick={link.open}>
+                    {t("panel.row.openIn", { table: link.label })} <ArrowUpRight size={12} />
+                  </button>
+                ) : null}
+              </div>
+            );
+          })}
+        </dl>
+      </div>
+    </>
+  );
+}
+
+/** Toolbar button that copies `text` and says so for a moment. */
+export function CopyButton({ text, label, title }: { text: string; label: string; title?: string }) {
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return undefined;
+    const timer = window.setTimeout(() => setCopied(false), 1500);
+    return () => window.clearTimeout(timer);
+  }, [copied]);
+  return (
+    <button
+      type="button"
+      className="toolbar-button"
+      title={title}
+      onClick={() => void navigator.clipboard?.writeText(text).then(() => setCopied(true))}
+    >
+      {copied ? <Check size={14} /> : <Copy size={14} />} {copied ? t("panel.copied") : label}
+    </button>
+  );
+}
+
+/** Result type and parameters of a function or procedure, shown above its definition. */
+export function RoutineSummary({ routine, onUse }: { routine: TableSchema; onUse: () => void }) {
+  const columns = routine.columns;
+  const defaults = columns.some((column) => column.defaultValue !== null);
+  return (
+    <section className="routine-args">
+      <div className="routine-head">
+        <div className="relations-title">
+          {t("panel.arguments.title")} <small>{columns.length}</small>
+        </div>
+        <button type="button" className="toolbar-button" title={t("panel.arguments.useTitle")} onClick={onUse}>
+          <SquareTerminal size={14} /> {t("panel.arguments.use")}
+        </button>
+      </div>
+      {routine.returns ? (
+        <div className="routine-returns">
+          {t("panel.arguments.returns")} <span className="mono" title={routine.returns}>{routine.returns}</span>
+        </div>
+      ) : null}
+      {columns.length === 0 ? (
+        <div className="relation-empty plain">{t("panel.arguments.none")}</div>
+      ) : (
+        <div className={defaults ? "relation-group routine-table with-defaults" : "relation-group routine-table"}>
+          <div className="routine-arg relation-head">
+            <span>{t("panel.arguments.name")}</span>
+            <span>{t("panel.arguments.type")}</span>
+            {defaults ? <span>{t("panel.arguments.default")}</span> : null}
+          </div>
+          {columns.map((column, position) => (
+            <div key={`${position}:${column.name}`} className="routine-arg">
+              <span className="routine-name">
+                <span className="mono" title={column.name}>{column.name}</span>
+                {column.mode && column.mode !== "IN" ? <span className="routine-mode" title={t("panel.arguments.modeTitle")}>{column.mode}</span> : null}
+              </span>
+              <span className="mono" title={column.dataType}>{column.dataType}</span>
+              {defaults ? <span className="mono" title={column.defaultValue ?? undefined}>{column.defaultValue ?? ""}</span> : null}
             </div>
-          );
-        })}
-      </dl>
-    </div>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 

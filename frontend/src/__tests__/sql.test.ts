@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { activeSql, splitStatements, statementRanges } from "../editor/activeSql";
 import { setDialect, type ColumnDefinition, type TableSchema } from "../lib/api";
-import { createTableSql, deleteSql, insertSql, postgresCast, updateSql, type NewColumn } from "../workspace/changes";
+import { createTableSql, deleteSql, insertSql, postgresCast, routineCallSql, updateSql, type NewColumn } from "../workspace/changes";
 import { addForeignKeySql, dropForeignKeySql, foreignKeyClause } from "../workspace/relations";
 
 const column = (name: string, dataType: string, extra: Partial<ColumnDefinition> = {}): ColumnDefinition => ({
@@ -142,5 +142,40 @@ describe("postgresCast", () => {
     expect(postgresCast("int4; drop table x")).toBeNull();
     expect(postgresCast("text) or (1")).toBeNull();
     expect(postgresCast('"unclosed')).toBeNull();
+  });
+});
+
+describe("routine calls", () => {
+  const arg = (name: string, dataType: string, mode = "IN", defaultValue: string | null = null): ColumnDefinition => ({ name, dataType, nullable: true, primaryKey: false, defaultValue, options: [], mode });
+  const routine = (kind: TableSchema["kind"], columns: ColumnDefinition[], returns: string | null = null): TableSchema => ({ schema: "public", name: "total", kind, columns, definition: null, returns });
+
+  it("labels one value per argument and fills in defaults", () => {
+    setDialect("postgres");
+    expect(routineCallSql(routine("function", [arg("p_id", "integer"), arg("p_from", "date", "IN", "'2024-01-01'::date")], "numeric"), "postgres")).toBe(
+      'SELECT "public"."total"(\n  NULL, -- p_id integer\n  \'2024-01-01\'::date -- p_from date\n);',
+    );
+  });
+
+  it("leaves out the OUT parameters of a PostgreSQL function", () => {
+    setDialect("postgres");
+    expect(routineCallSql(routine("function", [arg("p_id", "integer"), arg("p_sum", "numeric", "OUT")], "numeric"), "postgres")).toBe(
+      'SELECT "public"."total"(\n  NULL -- p_id integer\n);',
+    );
+  });
+
+  it("reads set-returning functions as a table and calls procedures", () => {
+    setDialect("postgres");
+    expect(routineCallSql(routine("function", [], "TABLE(id integer)"), "postgres")).toBe('SELECT * FROM "public"."total"();');
+    expect(routineCallSql(routine("function", [], "SETOF orders"), "postgres")).toBe('SELECT * FROM "public"."total"();');
+    expect(routineCallSql(routine("procedure", [arg("p_id", "integer"), arg("p_out", "integer", "INOUT")]), "postgres")).toBe(
+      'CALL "public"."total"(\n  NULL, -- p_id integer\n  NULL -- p_out integer INOUT\n);',
+    );
+  });
+
+  it("passes MySQL output parameters through session variables", () => {
+    setDialect("mysql");
+    expect(routineCallSql(routine("procedure", [arg("p_id", "int"), arg("p_result", "int", "OUT")]), "mysql")).toBe(
+      "CALL `public`.`total`(\n  NULL, -- p_id int\n  @p_result -- p_result int OUT\n);",
+    );
   });
 });
