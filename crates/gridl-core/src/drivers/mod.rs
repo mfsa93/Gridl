@@ -9,6 +9,16 @@ pub use postgres::PostgresDriver;
 pub use sqlite::SqliteDriver;
 
 use crate::error::CoreError;
+use crate::DatabaseDriver;
+
+/// One driver of every engine built into the app. A new engine adds its driver here.
+pub fn builtin_drivers() -> Vec<Box<dyn DatabaseDriver>> {
+    vec![
+        Box::new(PostgresDriver::new()),
+        Box::new(MysqlDriver::new()),
+        Box::new(SqliteDriver::new()),
+    ]
+}
 
 pub(crate) fn db_err(err: sqlx::Error) -> CoreError {
     CoreError::Database(err.to_string())

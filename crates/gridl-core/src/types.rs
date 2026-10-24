@@ -196,7 +196,7 @@ impl ConnectionConfig {
     }
 
     fn validate_security(&self) -> Result<(), CoreError> {
-        if !matches!(self.engine, DatabaseEngine::Postgres | DatabaseEngine::Mysql) {
+        if crate::engines::spec(self.engine).connection.file_based {
             return Ok(());
         }
         validate_path_opt(self.tls.root_cert.as_deref(), PathLabel::RootCert)?;

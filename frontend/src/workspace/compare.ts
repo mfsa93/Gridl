@@ -1,3 +1,4 @@
+import { engineSpec } from "../engines";
 import { qualifiedName, quoteIdent, type DatabaseEngine, type SqlValue, type TableSchema } from "../lib/api";
 
 /** How many differing rows the comparison brings back to show. */
@@ -18,12 +19,13 @@ export type DiffRow = {
 export type ComparePlan = { keys: string[]; columns: string[]; sql: string; countSql: string } | { error: "no-key" | "key-missing" | "no-columns"; missing?: string };
 
 function text(engine: DatabaseEngine, expression: string): string {
-  return engine === "mysql" ? `CAST(${expression} AS CHAR)` : `CAST(${expression} AS TEXT)`;
+  return `CAST(${expression} AS ${engineSpec(engine).sql.textCast})`;
 }
 
 function differs(engine: DatabaseEngine, left: string, right: string): string {
-  if (engine === "mysql") return `NOT (${left} <=> ${right})`;
-  if (engine === "sqlite") return `${left} IS NOT ${right}`;
+  const style = engineSpec(engine).sql.nullSafeDiffers;
+  if (style === "not-null-safe-equals") return `NOT (${left} <=> ${right})`;
+  if (style === "is-not") return `${left} IS NOT ${right}`;
   return `${left} IS DISTINCT FROM ${right}`;
 }
 

@@ -1,3 +1,4 @@
+import { engineSpec } from "../engines";
 import { useState } from "react";
 import { ChevronRight, Minus, Plus, X } from "lucide-react";
 import { type DatabaseEngine } from "../lib/api";
@@ -188,7 +189,7 @@ export function ColumnDialog({
             <input type="checkbox" checked={generated ? false : nullable} disabled={generated} onChange={(event) => setNullable(event.target.checked)} />
             {t("dialog.nullable")}
           </label>
-          {engine !== "sqlite" ? (
+          {engineSpec(engine).structure.uniqueOnAdd ? (
             <label className="check-row">
               <input type="checkbox" checked={unique} onChange={(event) => setUnique(event.target.checked)} />
               {t("dialog.unique")}
@@ -223,7 +224,7 @@ export function ColumnDialog({
 
 /** An auto-incrementing key where the engine has one, so new tables get ids for free. */
 function defaultKeyType(engine: DatabaseEngine, types: string[]): string {
-  const preferred = engine === "postgres" ? "serial" : engine === "mysql" ? "serial" : "INTEGER";
+  const preferred = engineSpec(engine).structure.keyType;
   return types.includes(preferred) ? preferred : (types[0] ?? "text");
 }
 
@@ -354,7 +355,7 @@ export function TableDialog({
                   aria-label={t("dialog.table.size")}
                   inputMode="numeric"
                   disabled={kind === "plain"}
-                  placeholder={kind === "length" ? (engine === "mysql" ? "255" : "—") : kind === "numeric" ? "10,2" : ""}
+                  placeholder={kind === "length" ? (engineSpec(engine).structure.lengthHint ?? "—") : kind === "numeric" ? "10,2" : ""}
                   onChange={(event) => update(index, { size: event.target.value })}
                 />
                 <input

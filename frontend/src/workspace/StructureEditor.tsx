@@ -1,3 +1,4 @@
+import { engineSpec } from "../engines";
 import { Trash2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { errorMessage, type DatabaseEngine, type TableSchema } from "../lib/api";
@@ -123,7 +124,7 @@ export function StructureEditor({ table, engine, busy, error, onApply, draft, on
             {visible.map((row, index) => {
               const spec = specs.find((item) => item.name === row.dataType);
               const options = spec ? specs : [{ name: row.dataType, kind: "plain" as const }, ...specs];
-              const locked = engine === "sqlite" && row.originalName !== null;
+              const locked = !engineSpec(engine).structure.alterColumns && row.originalName !== null;
               const generated = Boolean(spec?.generated);
               const fresh = row.key === phantom.key;
               return (
@@ -230,8 +231,8 @@ export function StructureEditor({ table, engine, busy, error, onApply, draft, on
             ? t("structure.confirmDrop", { columns: dropped.map((row) => row.originalName).join(", ") })
             : localError || error
               ? localError || error
-              : engine === "sqlite"
-                ? t("structure.sqliteNote")
+              : !engineSpec(engine).structure.alterColumns
+                ? t("structure.limitedNote", { engine: engineSpec(engine).name })
                 : t("structure.lastRowAdds")}
         </span>
         {dirty ? (

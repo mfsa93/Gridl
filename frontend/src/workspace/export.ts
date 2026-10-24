@@ -1,3 +1,4 @@
+import { engineSpec } from "../engines";
 import { quoteIdent, type ColumnDefinition, type DatabaseEngine, type SqlValue } from "../lib/api";
 
 export type ExportFormat = "csv" | "json" | "sql";
@@ -68,19 +69,19 @@ export function sqlLiteral(value: SqlValue | undefined, engine: DatabaseEngine):
   if (value.t === "int") return value.v;
   if (value.t === "float") return Number.isFinite(value.v) ? String(value.v) : `'${String(value.v)}'`;
   if (value.t === "bool") {
-    if (engine === "sqlite") return value.v ? "1" : "0";
+    if (engineSpec(engine).sql.booleans === "number") return value.v ? "1" : "0";
     return value.v ? "TRUE" : "FALSE";
   }
   if (value.t === "bytes") {
     const hex = base64Hex(value.v);
-    return engine === "postgres" ? `'\\x${hex}'` : `X'${hex}'`;
+    return engineSpec(engine).sql.bytes === "escaped-hex" ? `'\\x${hex}'` : `X'${hex}'`;
   }
   return textLiteral(value.v, engine);
 }
 
-/** Quotes text as a string literal. MySQL also treats backslash as an escape. */
+/** Quotes text as a string literal, doubling backslashes where the engine reads them as escapes. */
 export function textLiteral(text: string, engine: DatabaseEngine): string {
-  const escaped = engine === "mysql" ? text.replaceAll("\\", "\\\\") : text;
+  const escaped = engineSpec(engine).sql.backslashEscapes ? text.replaceAll("\\", "\\\\") : text;
   return `'${escaped.replaceAll("'", "''")}'`;
 }
 

@@ -11,8 +11,8 @@ use std::time::Instant;
 
 use async_trait::async_trait;
 use gridl_core::{
-    ChunkSink, ConnectionConfig, ConnectionId, CoreError, DatabaseEngine, QueryRequest, RowChunk,
-    SecretString, TlsMode, DEFAULT_CHUNK_ROWS,
+    BackupTool, ChunkSink, ConnectionConfig, ConnectionId, CoreError, DatabaseEngine, QueryRequest,
+    RowChunk, SecretString, TlsMode, DEFAULT_CHUNK_ROWS,
 };
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -98,9 +98,16 @@ pub(crate) async fn run_backup(
     partial.push(".partial");
     let partial = PathBuf::from(partial);
     let _ = std::fs::remove_file(&partial);
-    let outcome = match session.config.engine {
-        DatabaseEngine::Sqlite => vacuum_into(state, &id, &partial).await,
-        DatabaseEngine::Postgres => {
+    let tool = gridl_core::engine_spec(session.config.engine).tools.backup;
+    let outcome = match tool {
+        None => Err(tr!(
+            "This engine has no backup tool.",
+            "Este motor no tiene herramienta de respaldo."
+        )),
+        Some(BackupTool::VacuumInto) => {
+            vacuum_into(state, session.config.engine, &id, &partial).await
+        }
+        Some(BackupTool::PgDump) => {
             let password = password(state, request.password, &session.config).await?;
             let target = Target::of(&session);
             let mut args = vec![
@@ -114,7 +121,7 @@ pub(crate) async fn run_backup(
             args.extend(target.pg_args());
             run_tool("pg_dump", &args, pg_env(&session.config, password.as_ref()), None).await
         }
-        DatabaseEngine::Mysql => {
+        Some(BackupTool::Mysqldump) => {
             let password = password(state, request.password, &session.config).await?;
             let target = Target::of(&session);
             let mut args = vec![
@@ -159,7 +166,8 @@ pub(crate) async fn run_restore(
     let started = Instant::now();
     let id = ConnectionId::new(request.connection_id).map_err(fail)?;
     let session = state.session(id.as_str()).map_err(fail)?;
-    if session.config.engine == DatabaseEngine::Sqlite {
+    let spec = gridl_core::engine_spec(session.config.engine);
+    if !spec.tools.restore {
         return Err(tr!(
             "To restore SQLite, open the backup file as a connection.",
             "Para restaurar un SQLite, abre el archivo de respaldo como conexión."
@@ -180,8 +188,9 @@ pub(crate) async fn run_restore(
     )?;
     let password = password(state, request.password, &session.config).await?;
     let target = Target::of(&session);
-    match session.config.engine {
-        DatabaseEngine::Postgres => {
+    // A backup is restored with the client of the tool that wrote it.
+    match spec.tools.backup {
+        Some(BackupTool::PgDump) => {
             let mut args = vec![
                 "--no-psqlrc".to_owned(),
                 "--quiet".to_owned(),
@@ -193,7 +202,7 @@ pub(crate) async fn run_restore(
             args.extend(target.pg_args());
             run_tool("psql", &args, pg_env(&session.config, password.as_ref()), None).await?;
         }
-        DatabaseEngine::Mysql => {
+        Some(BackupTool::Mysqldump) => {
             let input = std::fs::File::open(&path).map_err(|err| {
                 tr!("Couldn't open the backup: {err}", "No se pudo abrir el respaldo: {err}")
             })?;
@@ -201,7 +210,7 @@ pub(crate) async fn run_restore(
             run_tool("mysql", &args, mysql_env(password.as_ref()), Some(Stdio::from(input)))
                 .await?;
         }
-        DatabaseEngine::Sqlite => {}
+        Some(BackupTool::VacuumInto) | None => {}
     }
     Ok(RestoreResult { duration_ms: elapsed_ms(started) })
 }
@@ -216,7 +225,12 @@ impl ChunkSink for NullSink {
 }
 
 /// SQLite copies itself with `VACUUM INTO`, consistent even while in use.
-async fn vacuum_into(state: &AppState, id: &ConnectionId, path: &Path) -> Result<(), String> {
+async fn vacuum_into(
+    state: &AppState,
+    engine: DatabaseEngine,
+    id: &ConnectionId,
+    path: &Path,
+) -> Result<(), String> {
     let target = path
         .to_str()
         .ok_or_else(|| tr!("the path is not valid UTF-8", "la ruta no es UTF-8 válido"))?;
@@ -225,7 +239,7 @@ async fn vacuum_into(state: &AppState, id: &ConnectionId, path: &Path) -> Result
     let cancel = Arc::new(AtomicBool::new(false));
     let request = QueryRequest::new(query_id, sql, Vec::new(), DEFAULT_CHUNK_ROWS, 1, cancel)
         .map_err(fail)?;
-    state.driver(DatabaseEngine::Sqlite).query(id, &request, &mut NullSink).await.map_err(fail)?;
+    state.driver(engine).query(id, &request, &mut NullSink).await.map_err(fail)?;
     Ok(())
 }
 
@@ -259,9 +273,8 @@ impl Target {
             Some((host, port)) => (host.clone(), *port),
             None => (
                 config.host.clone().unwrap_or_else(|| "localhost".into()),
-                config.port.unwrap_or(match config.engine {
-                    DatabaseEngine::Mysql => 3306,
-                    _ => 5432,
+                config.port.unwrap_or_else(|| {
+                    gridl_core::engine_spec(config.engine).connection.default_port.unwrap_or(0)
                 }),
             ),
         };

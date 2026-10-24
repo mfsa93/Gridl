@@ -1,0 +1,385 @@
+[
+  {
+    "id": "postgres",
+    "name": "PostgreSQL",
+    "short": "Pg",
+    "color": "#3b82f6",
+    "connection": {
+      "fileBased": false,
+      "defaultPort": 5432,
+      "defaultUser": "postgres",
+      "defaultName": "PostgreSQL",
+      "fileExtensions": []
+    },
+    "sql": {
+      "identifierQuote": "\"",
+      "params": "dollar",
+      "paramCasts": true,
+      "dialect": "postgresql",
+      "backslashEscapes": false,
+      "hashComments": false,
+      "dollarQuotes": true,
+      "textCast": "TEXT",
+      "nullSafeDiffers": "is-distinct-from",
+      "contains": "ilike-text",
+      "booleans": "keyword",
+      "bytes": "escaped-hex",
+      "emptyInsert": "default values",
+      "now": [
+        "current_date",
+        "current_time",
+        "now()"
+      ],
+      "outParamVariables": false
+    },
+    "structure": {
+      "schemas": true,
+      "ddl": "postgres",
+      "columnTypes": [
+        {
+          "name": "text",
+          "kind": "plain"
+        },
+        {
+          "name": "varchar",
+          "kind": "length"
+        },
+        {
+          "name": "char",
+          "kind": "length"
+        },
+        {
+          "name": "smallint",
+          "kind": "plain"
+        },
+        {
+          "name": "integer",
+          "kind": "plain"
+        },
+        {
+          "name": "bigint",
+          "kind": "plain"
+        },
+        {
+          "name": "serial",
+          "kind": "plain",
+          "generated": true
+        },
+        {
+          "name": "bigserial",
+          "kind": "plain",
+          "generated": true
+        },
+        {
+          "name": "boolean",
+          "kind": "plain"
+        },
+        {
+          "name": "numeric",
+          "kind": "numeric"
+        },
+        {
+          "name": "real",
+          "kind": "plain"
+        },
+        {
+          "name": "double precision",
+          "kind": "plain"
+        },
+        {
+          "name": "date",
+          "kind": "plain"
+        },
+        {
+          "name": "time",
+          "kind": "plain"
+        },
+        {
+          "name": "timestamp",
+          "kind": "plain"
+        },
+        {
+          "name": "timestamptz",
+          "kind": "plain"
+        },
+        {
+          "name": "interval",
+          "kind": "plain"
+        },
+        {
+          "name": "uuid",
+          "kind": "plain"
+        },
+        {
+          "name": "json",
+          "kind": "plain"
+        },
+        {
+          "name": "jsonb",
+          "kind": "plain"
+        },
+        {
+          "name": "bytea",
+          "kind": "plain"
+        }
+      ],
+      "keyType": "serial",
+      "lengthHint": null,
+      "referenceRules": [
+        [
+          "^(serial|integer|int4)$",
+          "integer"
+        ],
+        [
+          "^(bigserial|bigint|int8)$",
+          "bigint"
+        ],
+        [
+          "^(smallserial|smallint)$",
+          "smallint"
+        ],
+        [
+          "^character varying",
+          "varchar"
+        ]
+      ],
+      "referenceFallback": null,
+      "alterColumns": true,
+      "uniqueOnAdd": true,
+      "alterForeignKeys": true,
+      "dropForeignKey": "drop constraint"
+    },
+    "tools": {
+      "explain": "postgres-json",
+      "rowEstimate": "pg-class",
+      "backup": "pg-dump",
+      "restore": true
+    }
+  },
+  {
+    "id": "mysql",
+    "name": "MySQL / MariaDB",
+    "short": "My",
+    "color": "#f59e0b",
+    "connection": {
+      "fileBased": false,
+      "defaultPort": 3306,
+      "defaultUser": "root",
+      "defaultName": "MySQL",
+      "fileExtensions": []
+    },
+    "sql": {
+      "identifierQuote": "`",
+      "params": "question",
+      "paramCasts": false,
+      "dialect": "mysql",
+      "backslashEscapes": true,
+      "hashComments": true,
+      "dollarQuotes": false,
+      "textCast": "CHAR",
+      "nullSafeDiffers": "not-null-safe-equals",
+      "contains": "like",
+      "booleans": "keyword",
+      "bytes": "x-hex",
+      "emptyInsert": "() values ()",
+      "now": [
+        "current_date",
+        "current_time",
+        "now()"
+      ],
+      "outParamVariables": true
+    },
+    "structure": {
+      "schemas": false,
+      "ddl": "mysql",
+      "columnTypes": [
+        {
+          "name": "varchar",
+          "kind": "length"
+        },
+        {
+          "name": "char",
+          "kind": "length"
+        },
+        {
+          "name": "text",
+          "kind": "plain"
+        },
+        {
+          "name": "mediumtext",
+          "kind": "plain"
+        },
+        {
+          "name": "longtext",
+          "kind": "plain"
+        },
+        {
+          "name": "tinyint",
+          "kind": "plain"
+        },
+        {
+          "name": "smallint",
+          "kind": "plain"
+        },
+        {
+          "name": "int",
+          "kind": "plain"
+        },
+        {
+          "name": "bigint",
+          "kind": "plain"
+        },
+        {
+          "name": "bigint unsigned",
+          "kind": "plain"
+        },
+        {
+          "name": "serial",
+          "kind": "plain",
+          "generated": true
+        },
+        {
+          "name": "boolean",
+          "kind": "plain"
+        },
+        {
+          "name": "decimal",
+          "kind": "numeric"
+        },
+        {
+          "name": "float",
+          "kind": "plain"
+        },
+        {
+          "name": "double",
+          "kind": "plain"
+        },
+        {
+          "name": "date",
+          "kind": "plain"
+        },
+        {
+          "name": "time",
+          "kind": "plain"
+        },
+        {
+          "name": "datetime",
+          "kind": "plain"
+        },
+        {
+          "name": "timestamp",
+          "kind": "plain"
+        },
+        {
+          "name": "json",
+          "kind": "plain"
+        },
+        {
+          "name": "blob",
+          "kind": "plain"
+        },
+        {
+          "name": "longblob",
+          "kind": "plain"
+        }
+      ],
+      "keyType": "serial",
+      "lengthHint": "255",
+      "referenceRules": [
+        [
+          "^(serial|bigint( ?\\(20\\))? unsigned)",
+          "bigint unsigned"
+        ]
+      ],
+      "referenceFallback": null,
+      "alterColumns": true,
+      "uniqueOnAdd": true,
+      "alterForeignKeys": true,
+      "dropForeignKey": "drop foreign key"
+    },
+    "tools": {
+      "explain": "mysql-json",
+      "rowEstimate": "information-schema",
+      "backup": "mysqldump",
+      "restore": true
+    }
+  },
+  {
+    "id": "sqlite",
+    "name": "SQLite",
+    "short": "Sl",
+    "color": "#8b5cf6",
+    "connection": {
+      "fileBased": true,
+      "defaultPort": null,
+      "defaultUser": null,
+      "defaultName": "SQLite",
+      "fileExtensions": [
+        "sqlite",
+        "sqlite3",
+        "db"
+      ]
+    },
+    "sql": {
+      "identifierQuote": "\"",
+      "params": "question",
+      "paramCasts": false,
+      "dialect": "sqlite",
+      "backslashEscapes": false,
+      "hashComments": false,
+      "dollarQuotes": false,
+      "textCast": "TEXT",
+      "nullSafeDiffers": "is-not",
+      "contains": "like-escape",
+      "booleans": "number",
+      "bytes": "x-hex",
+      "emptyInsert": "default values",
+      "now": [
+        "date('now')",
+        "time('now')",
+        "datetime('now')"
+      ],
+      "outParamVariables": false
+    },
+    "structure": {
+      "schemas": false,
+      "ddl": "sqlite",
+      "columnTypes": [
+        {
+          "name": "TEXT",
+          "kind": "plain"
+        },
+        {
+          "name": "INTEGER",
+          "kind": "plain"
+        },
+        {
+          "name": "REAL",
+          "kind": "plain"
+        },
+        {
+          "name": "NUMERIC",
+          "kind": "plain"
+        },
+        {
+          "name": "BLOB",
+          "kind": "plain"
+        }
+      ],
+      "keyType": "INTEGER",
+      "lengthHint": null,
+      "referenceRules": [],
+      "referenceFallback": "INTEGER",
+      "alterColumns": false,
+      "uniqueOnAdd": false,
+      "alterForeignKeys": false,
+      "dropForeignKey": "drop constraint"
+    },
+    "tools": {
+      "explain": "sqlite-query-plan",
+      "rowEstimate": null,
+      "backup": "vacuum-into",
+      "restore": false
+    }
+  }
+]

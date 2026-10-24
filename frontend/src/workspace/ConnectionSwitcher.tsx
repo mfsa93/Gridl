@@ -1,6 +1,6 @@
 import { Check, ChevronDown, Plus, Search } from "lucide-react";
 import { useState } from "react";
-import { ENGINES } from "../home/engines";
+import { engineOptions } from "../home/engines";
 import { subtitle } from "../home/draft";
 import type { ConnectionConfig } from "../lib/api";
 import { t } from "../lib/i18n";
@@ -83,7 +83,7 @@ export function ConnectionSwitcher({
           </div>
           <div className="switcher-list" role="listbox">
             {shown.map((profile, index) => {
-              const engine = ENGINES.find((item) => item.id === profile.engine);
+              const engine = engineOptions().find((item) => item.id === profile.engine);
               const here = profile.id === current.id;
               return (
                 <button

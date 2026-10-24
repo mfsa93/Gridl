@@ -259,7 +259,7 @@ crates/gridl-desktop/      Tauri shell: IPC commands, windows, profiles, keychai
 crates/gridl-core/         ports and drivers (SQLite, PostgreSQL, MySQL/MariaDB)
 ```
 
-`DatabaseDriver` is the port; `SqliteDriver`, `PostgresDriver`, and `MysqlDriver` are the adapters. The shell does not speak SQL: it opens a session, asks for the catalog, and consumes row chunks. Passwords are not part of `ConnectionConfig`; they are stored with the `keyring` crate (Keychain, Credential Manager, or Secret Service).
+`DatabaseDriver` is the port; `SqliteDriver`, `PostgresDriver`, and `MysqlDriver` are the adapters, registered in `builtin_drivers()`. Each engine's differences live in its `EngineSpec`, which the frontend reads through `list_engines`. The shell does not speak SQL: it opens a session, asks for the catalog, and consumes row chunks. Passwords are not part of `ConnectionConfig`; they are stored with the `keyring` crate (Keychain, Credential Manager, or Secret Service).
 
 - **Streaming**: queries are never materialized whole. The driver pushes 500-row `RowChunk`s through a Tauri `Channel` and the grid virtualizes rendering. Caps: 1,000,000 rows per result and 256 KiB per cell.
 - **Editor session**: each connection keeps a pinned connection for the editor, so transactions span several queries. Inline error checking uses another pool connection, so it never aborts an open transaction.
@@ -287,10 +287,7 @@ install.sh                          macOS installer
 
 ### Adding an engine
 
-1. Implement `DatabaseDriver` in `crates/gridl-core`.
-2. Register the new `DatabaseEngine` value in the shell (`AppState::driver`).
-3. Do not accumulate the result: call `ChunkSink::on_chunk` for each chunk.
-4. Use a pinned connection per session for `query` and a pool transaction for `execute_batch`.
+An engine is a driver (`DatabaseDriver`) and a spec (`EngineSpec` in `crates/gridl-core/src/engines.rs`) that describes how it differs: connection defaults, SQL dialect, column types, capabilities. The rest of the app reads the spec instead of branching on engine names. Step by step: [docs/adding-an-engine.md](docs/adding-an-engine.md).
 
 ## License
 

@@ -1,3 +1,4 @@
+import { engineSpec } from "../engines";
 import { defaultSafety, type ConnectionConfig, type DatabaseEngine, type SafetySettings, type SshAuth, type SshSettings, type TlsMode, type TlsSettings } from "../lib/api";
 import { t } from "../lib/i18n";
 
@@ -52,19 +53,24 @@ const blankSecurity = {
   safety: defaultSafety,
 };
 
+/** The database is a file: no host, port, user, TLS or SSH. */
+export function fileBased(engine: DatabaseEngine): boolean {
+  return engineSpec(engine).connection.fileBased;
+}
+
 export function defaultPort(engine: DatabaseEngine): number {
-  return engine === "mysql" ? 3306 : 5432;
+  return engineSpec(engine).connection.defaultPort ?? 0;
 }
 
 export function blankDraft(engine: DatabaseEngine): Draft {
   return {
     id: crypto.randomUUID(),
-    name: engine === "sqlite" ? "SQLite" : engine === "mysql" ? "MySQL" : "PostgreSQL",
+    name: engineSpec(engine).connection.defaultName,
     engine,
     database: "",
     host: "localhost",
     port: String(defaultPort(engine)),
-    username: engine === "mysql" ? "root" : "postgres",
+    username: engineSpec(engine).connection.defaultUser ?? "",
     credentialAccount: null,
     group: "",
     readOnly: false,
@@ -82,7 +88,7 @@ export function draftFromProfile(profile: ConnectionConfig): Draft {
     engine: profile.engine,
     database: profile.database,
     host: profile.host ?? "localhost",
-    port: String(profile.port ?? (profile.engine === "sqlite" ? "" : defaultPort(profile.engine))),
+    port: String(profile.port ?? (fileBased(profile.engine) ? "" : defaultPort(profile.engine))),
     username: profile.username ?? "",
     credentialAccount: profile.credentialAccount,
     group: profile.group ?? "",
@@ -115,7 +121,7 @@ function emptyToNull(value: string): string | null {
 }
 
 function tlsFromDraft(draft: Draft): TlsSettings {
-  if (draft.engine === "sqlite") {
+  if (fileBased(draft.engine)) {
     return { mode: "prefer", rootCert: null, clientCert: null, clientKey: null };
   }
   return {
@@ -128,7 +134,7 @@ function tlsFromDraft(draft: Draft): TlsSettings {
 
 function sshFromDraft(draft: Draft): SshSettings {
   return {
-    enabled: draft.engine !== "sqlite" && draft.sshEnabled,
+    enabled: !fileBased(draft.engine) && draft.sshEnabled,
     host: emptyToNull(draft.sshHost),
     port: Number(draft.sshPort) || 22,
     username: emptyToNull(draft.sshUsername),
@@ -146,13 +152,13 @@ export function toConfig(draft: Draft): ConnectionConfig {
     name: draft.name.trim() || t("home.defaultConnectionName"),
     engine: draft.engine,
     database: draft.database.trim(),
-    host: draft.engine !== "sqlite" ? draft.host.trim() : null,
-    port: draft.engine !== "sqlite" ? Number(draft.port) || defaultPort(draft.engine) : null,
-    username: draft.engine !== "sqlite" ? draft.username.trim() : null,
+    host: !fileBased(draft.engine) ? draft.host.trim() : null,
+    port: !fileBased(draft.engine) ? Number(draft.port) || defaultPort(draft.engine) : null,
+    username: !fileBased(draft.engine) ? draft.username.trim() : null,
     credentialAccount: draft.credentialAccount,
     group: group || null,
     readOnly: draft.readOnly,
-    createIfMissing: draft.engine === "sqlite" ? draft.createIfMissing : false,
+    createIfMissing: fileBased(draft.engine) ? draft.createIfMissing : false,
     tls: tlsFromDraft(draft),
     ssh: sshFromDraft(draft),
     safety: draft.safety,
@@ -160,8 +166,8 @@ export function toConfig(draft: Draft): ConnectionConfig {
 }
 
 export function subtitle(profile: ConnectionConfig): string {
-  if (profile.engine === "sqlite") return profile.database;
+  if (fileBased(profile.engine)) return profile.database;
   const host = profile.host ?? "localhost";
-  const port = profile.port ?? 5432;
+  const port = profile.port ?? defaultPort(profile.engine);
   return `${host}:${port} · ${profile.database}`;
 }

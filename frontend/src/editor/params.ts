@@ -1,3 +1,4 @@
+import { engineSpec } from "../engines";
 import type { DatabaseEngine, SqlValue } from "../lib/api";
 
 type Piece = { kind: "text"; text: string } | { kind: "param"; name: string };
@@ -7,6 +8,7 @@ type Piece = { kind: "text"; text: string } | { kind: "param"; name: string };
  * `$tag$` bodies, `::casts`, MySQL `:=` and array slices like `[1:2]` are text.
  */
 function split(sql: string, engine: DatabaseEngine): Piece[] {
+  const { backslashEscapes, hashComments, dollarQuotes } = engineSpec(engine).sql;
   const pieces: Piece[] = [];
   let text = "";
   let at = 0;
@@ -20,7 +22,7 @@ function split(sql: string, engine: DatabaseEngine): Piece[] {
     if (char === "'" || char === '"' || char === "`") {
       let end = at + 1;
       while (end < sql.length) {
-        if (engine === "mysql" && sql[end] === "\\") {
+        if (backslashEscapes && sql[end] === "\\") {
           end += 2;
           continue;
         }
@@ -38,7 +40,7 @@ function split(sql: string, engine: DatabaseEngine): Piece[] {
       continue;
     }
     // Comments.
-    if ((char === "-" && next === "-") || (engine === "mysql" && char === "#")) {
+    if ((char === "-" && next === "-") || (hashComments && char === "#")) {
       const end = sql.indexOf("\n", at);
       const stop = end < 0 ? sql.length : end;
       push(sql.slice(at, stop));
@@ -53,7 +55,7 @@ function split(sql: string, engine: DatabaseEngine): Piece[] {
       continue;
     }
     // PostgreSQL dollar-quoted bodies: $$ … $$ or $tag$ … $tag$.
-    if (engine === "postgres" && char === "$") {
+    if (dollarQuotes && char === "$") {
       const tag = /^\$[A-Za-z_]?\w*\$/.exec(sql.slice(at))?.[0];
       if (tag) {
         const end = sql.indexOf(tag, at + tag.length);
@@ -106,8 +108,8 @@ export function bindParams(sql: string, engine: DatabaseEngine, values: Record<s
       continue;
     }
     const value = values[piece.name] ?? { t: "null" as const };
-    if (engine === "postgres") {
-      // PostgreSQL can reuse $n, so a name used twice binds once.
+    if (engineSpec(engine).sql.params === "dollar") {
+      // $n can be reused, so a name used twice binds once.
       let number = numbered.get(piece.name);
       if (number === undefined) {
         params.push(value);
