@@ -44,28 +44,44 @@ export function TablePager({
   onPage,
   onPageSize,
   onCancel,
+  onCount,
 }: {
   page: TablePage | undefined;
   running: boolean;
   onPage: (page: number) => void;
   onPageSize: (pageSize: number) => void;
   onCancel: () => void;
+  /** Replaces an estimated total with an exact count. */
+  onCount: () => void;
 }) {
   const current = page?.page ?? 0;
   const pageSize = page?.pageSize ?? 100;
-  const total = page?.total ?? 0;
-  const pageCount = Math.max(1, Math.ceil(total / pageSize));
-  const from = total === 0 ? 0 : current * pageSize + 1;
-  const to = Math.min(total, (current + 1) * pageSize);
+  const shown = page?.shown ?? 0;
+  const total = page?.total ?? null;
+  const from = shown === 0 ? 0 : current * pageSize + 1;
+  const to = current * pageSize + shown;
+  // Without an exact total, a full page means there may be more.
+  const hasNext = total !== null && !page?.approximate ? (current + 1) * pageSize < total : shown === pageSize;
+  const range = (count: string) => t("chrome.range", { from: formatNumber(from), to: formatNumber(to), total: count });
   return (
     <div className="pager">
       <button type="button" disabled={running || current <= 0} onClick={() => onPage(current - 1)}>
         <ChevronLeft size={14} /> {t("chrome.previous")}
       </button>
-      <button type="button" disabled={running || current + 1 >= pageCount} onClick={() => onPage(current + 1)}>
+      <button type="button" disabled={running || !hasNext} onClick={() => onPage(current + 1)}>
         {t("chrome.next")} <ChevronRight size={14} />
       </button>
-      <span>{page ? t("chrome.range", { from: formatNumber(from), to: formatNumber(to), total: formatNumber(total) }) : t("chrome.loading")}</span>
+      {!page ? (
+        <span>{t("chrome.loading")}</span>
+      ) : total === null ? (
+        <span>{range(t("chrome.counting"))}</span>
+      ) : page.approximate ? (
+        <button type="button" className="pager-total" title={t("chrome.approxTitle")} disabled={running} onClick={onCount}>
+          {range(t("chrome.approxTotal", { total: formatNumber(total) }))}
+        </button>
+      ) : (
+        <span>{range(formatNumber(total))}</span>
+      )}
       <label>
         {t("chrome.rows")}
         <select value={pageSize} disabled={running} onChange={(event) => onPageSize(Number(event.target.value))}>

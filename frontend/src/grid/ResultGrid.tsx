@@ -1,3 +1,4 @@
+import { createPortal } from "react-dom";
 import DataEditor, {
   CompactSelection,
   type DataEditorRef,
@@ -13,11 +14,11 @@ import DataEditor, {
 } from "@glideapps/glide-data-grid";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { formatSqlValue, quoteIdent, type ColumnDefinition, type DatabaseEngine, type SqlValue } from "../lib/api";
-import { sqlLiteral, toTsv } from "../workspace/export";
+import { sqlLiteral, toTsv, toJson } from "../workspace/export";
 import { useColorScheme, type ColorScheme } from "../lib/appearance";
 import { ContextMenu } from "../workspace/panels";
 import { canonicalTemporal, formatTemporalPick, isBooleanColumn, isTemporalColumn, temporalInputType, temporalLabel } from "../workspace/changes";
-import { t } from "../lib/i18n";
+import { formatNumber, plural, t } from "../lib/i18n";
 
 const GRID_FONT = '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif';
 
@@ -111,6 +112,8 @@ type ResultGridProps = {
   linkedColumns?: string[];
   /** Right click on a cell, with the pointer position and the selection it falls in. */
   onCellMenu?: (row: number, column: number, point: { x: number; y: number }, selection: GridRangeActions | null) => void;
+  /** Where hidden and reordered columns are remembered; without it the layout lasts while the grid is shown. */
+  layoutKey?: string;
 };
 
 /** A multi-cell selection and what can be done with it, handed to the context menu. */
@@ -119,6 +122,7 @@ export type GridRangeActions = {
   cells: number;
   copy: (withHeaders: boolean) => void;
   copyInserts: (table: string, engine: DatabaseEngine) => void;
+  copyJson: () => void;
   paste: () => void;
   clear: () => void;
   removeRows: () => void;
@@ -420,6 +424,53 @@ const provideCellEditor: ProvideEditorCallback<GridCell> = (cell) => {
   return { ...menuEditorStyle, editor: (props) => <ChoiceMenu {...props} options={options} /> };
 };
 
+type SelectionStats = { cells: number; values: number; numeric: number; sum: number; min: number; max: number };
+/** Larger selections skip the summary so dragging over a huge result stays smooth. */
+const statsCellLimit = 200_000;
+const numericType = /int|numeric|decimal|real|double|float|money|serial/i;
+const statNumber = (value: number) => formatNumber(Math.round(value * 10000) / 10000);
+
+/** Hidden and reordered columns, saved by column name so a changed table still lines up. */
+type SavedLayout = { order: string[]; hidden: string[] };
+
+function readLayout(key: string | undefined, columns: ColumnDefinition[]): number[] {
+  const all = columns.map((_, index) => index);
+  if (!key) return all;
+  try {
+    const saved = JSON.parse(window.localStorage.getItem(`gridl.layout.${key}`) ?? "null") as SavedLayout | null;
+    if (!saved || !Array.isArray(saved.order)) return all;
+    const byName = new Map(columns.map((column, index) => [column.name, index]));
+    const hidden = new Set(saved.hidden ?? []);
+    const placed = saved.order.flatMap((name) => (byName.has(name) && !hidden.has(name) ? [byName.get(name) as number] : []));
+    // Columns the table gained since the layout was saved go at the end.
+    const known = new Set(saved.order);
+    const added = all.filter((index) => !known.has(columns[index]?.name ?? "") && !hidden.has(columns[index]?.name ?? ""));
+    const order = [...placed, ...added];
+    return order.length > 0 ? order : all;
+  } catch {
+    return all;
+  }
+}
+
+function writeLayout(key: string | undefined, columns: ColumnDefinition[], order: number[]) {
+  if (!key) return;
+  try {
+    const plain = order.length === columns.length && order.every((column, index) => column === index);
+    if (plain) {
+      window.localStorage.removeItem(`gridl.layout.${key}`);
+      return;
+    }
+    const shown = new Set(order);
+    const layout: SavedLayout = {
+      order: order.map((index) => columns[index]?.name ?? ""),
+      hidden: columns.filter((_, index) => !shown.has(index)).map((column) => column.name),
+    };
+    window.localStorage.setItem(`gridl.layout.${key}`, JSON.stringify(layout));
+  } catch {
+    // Storage can be full or blocked; the layout then lasts this session only.
+  }
+}
+
 function pastedLine(columns: ColumnDefinition[], startColumn: number, cells: readonly string[]): SqlValue[] {
   return columns.map((column, index) => {
     const offset = index - startColumn;
@@ -457,6 +508,7 @@ export function ResultGrid({
   onSort,
   linkedColumns,
   onCellMenu,
+  layoutKey,
 }: ResultGridProps) {
   const scheme = useColorScheme();
   const cellThemes = CELL_THEMES[scheme];
@@ -511,6 +563,29 @@ export function ResultGrid({
     setFitted({ key: fitKey, widths: fitColumnWidths(columns, rowsRef.current ?? [], titles) });
   }, [columns, fitKey, rowsRef, titles]);
   const [headerMenu, setHeaderMenu] = useState<{ column: number; x: number; y: number } | null>(null);
+  /** Columns kept in view on the left while scrolling sideways. */
+  const [frozen, setFrozen] = useState(0);
+  // The grid shows `order`: data column indexes, in display order, without the hidden ones.
+  // Every column index the grid hands back is a display position and goes through it.
+  const namesKey = `${layoutKey ?? ""}:${columns.map((column) => column.name).join("\0")}`;
+  const [layout, setLayout] = useState(() => ({ key: namesKey, order: readLayout(layoutKey, columns) }));
+  if (layout.key !== namesKey) setLayout({ key: namesKey, order: readLayout(layoutKey, columns) });
+  const order = layout.key === namesKey ? layout.order : columns.map((_, index) => index);
+  const custom = order.length !== columns.length || order.some((column, index) => column !== index);
+  const changeOrder = useCallback((next: number[]) => {
+    setLayout({ key: namesKey, order: next });
+    writeLayout(layoutKey, columns, next);
+  }, [columns, layoutKey, namesKey]);
+  const shownFrozen = Math.min(frozen, order.length);
+  /** A pasted line in display order, spread over the data columns it lands on. */
+  const toDataLine = useCallback((start: number, line: readonly string[]): string[] => {
+    const full = columns.map(() => "");
+    line.forEach((text, offset) => {
+      const column = order[start + offset];
+      if (column !== undefined) full[column] = text;
+    });
+    return full;
+  }, [columns, order]);
   /** Drops manual widths so the columns go back to fitting their content. */
   const refit = useCallback((only?: number) => {
     setWidths((current) => {
@@ -523,15 +598,17 @@ export function ResultGrid({
   }, [columns, fitKey, rowsRef, titles]);
   const gridColumns = useMemo<GridColumn[]>(
     () =>
-      columns.map((column, index) => {
+      order.flatMap((index) => {
+        const column = columns[index];
+        if (!column) return [];
         const id = `${index}:${column.name}`;
-        return {
+        return [{
           id,
           title: titles[index] ?? column.name,
           width: widths[id] ?? fitted.widths[index] ?? 120,
-        };
+        }];
       }),
-    [columns, fitted, titles, widths],
+    [columns, fitted, order, titles, widths],
   );
 
   const onColumnResize = useCallback((column: GridColumn, newSize: number) => {
@@ -541,9 +618,12 @@ export function ResultGrid({
   }, []);
 
   const selectionRef = useRef(gridSelection);
+  const [stats, setStats] = useState<SelectionStats | null>(null);
+  const statsFor = useRef<(selection: GridSelection) => SelectionStats | null>(() => null);
   const onGridSelectionChange = useCallback((selection: GridSelection) => {
     selectionRef.current = selection;
     setGridSelection(selection);
+    setStats(statsFor.current(selection));
     onSelectRows?.(selection.rows.toArray());
     const focused = selection.current?.cell[1] ?? selection.rows.first();
     onFocusRow?.(focused ?? null);
@@ -562,14 +642,15 @@ export function ResultGrid({
       event.preventDefault();
       event.stopPropagation();
       const matrix = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").replace(/\n$/, "").split("\n").map((line) => line.split("\t"));
-      if (onPasteRows) onPasteRows(0, matrix);
+      const lines = custom ? matrix.map((line) => toDataLine(0, line)) : matrix;
+      if (onPasteRows) onPasteRows(0, lines);
       else {
-        setLocalInserts((current) => [...current, ...matrix.map((line) => pastedLine(columns, 0, line))]);
+        setLocalInserts((current) => [...current, ...lines.map((line) => pastedLine(columns, 0, line))]);
       }
     };
     element.addEventListener("paste", onPasteEvent);
     return () => element.removeEventListener("paste", onPasteEvent);
-  }, [columns, external, onPasteRows]);
+  }, [columns, custom, external, onPasteRows, toDataLine]);
 
   const valueAt = useCallback((row: number, column: number): SqlValue | undefined => {
     const draftIndex = row - rowCount;
@@ -616,7 +697,7 @@ export function ResultGrid({
       if (drafted.length > 0) onDropInserts?.(drafted);
       return false;
     }
-    const columnsSelected = dataColumns(selection);
+    const columnsSelected = dataColumns(selection).flatMap((display) => (order[display] === undefined ? [] : [order[display] as number]));
     if (columnsSelected.length > 0) {
       const total = rowCount + shownInserts.length;
       for (let row = 0; row < total; row += 1) {
@@ -635,20 +716,21 @@ export function ResultGrid({
       if (drafted.length > 0) onDropInserts?.(drafted);
       return false;
     }
-    const startColumn = range.x;
     for (let row = range.y; row < range.y + range.height; row += 1) {
-      for (let column = startColumn; column < startColumn + range.width; column += 1) {
-        if (column >= 0) commitValue(row, column, { t: "null" });
+      for (let display = range.x; display < range.x + range.width; display += 1) {
+        const column = order[display];
+        if (column !== undefined) commitValue(row, column, { t: "null" });
       }
     }
     return false;
-  }, [commitValue, external, onDropInserts, onMarkRows, removedSet, rowCount, shownInserts.length]);
+  }, [commitValue, external, onDropInserts, onMarkRows, order, removedSet, rowCount, shownInserts.length]);
 
   const appendRows = useCallback((matrix: string[][]) => {
     if (matrix.length === 0) return;
-    if (onPasteRows) onPasteRows(0, matrix);
-    else setLocalInserts((current) => [...current, ...matrix.map((line) => pastedLine(columns, 0, line))]);
-  }, [columns, onPasteRows]);
+    const lines = custom ? matrix.map((line) => toDataLine(0, line)) : matrix;
+    if (onPasteRows) onPasteRows(0, lines);
+    else setLocalInserts((current) => [...current, ...lines.map((line) => pastedLine(columns, 0, line))]);
+  }, [columns, custom, onPasteRows, toDataLine]);
 
   const onPaste = useCallback((target: Item, values: readonly (readonly string[])[]) => {
     if (!external) return false;
@@ -662,7 +744,8 @@ export function ResultGrid({
     const startColumn = target[0];
     const startRow = target[1];
     let matrix = values.map((row) => [...row]);
-    if (isHeaderRow(matrix[0] ?? [], columns, startColumn)) matrix = matrix.slice(1);
+    const shownColumns = order.flatMap((index) => (columns[index] ? [columns[index] as ColumnDefinition] : []));
+    if (isHeaderRow(matrix[0] ?? [], shownColumns, startColumn)) matrix = matrix.slice(1);
     const total = rowCount + shownInserts.length;
     const overflow: string[][] = [];
     for (let rowOffset = 0; rowOffset < matrix.length; rowOffset += 1) {
@@ -673,21 +756,25 @@ export function ResultGrid({
         continue;
       }
       line.forEach((text, columnOffset) => {
-        commitValue(row, startColumn + columnOffset, pastedSql(text, columns[startColumn + columnOffset]));
+        const column = order[startColumn + columnOffset];
+        if (column !== undefined) commitValue(row, column, pastedSql(text, columns[column]));
       });
     }
     if (overflow.length > 0) {
-      if (onPasteRows) onPasteRows(startColumn, overflow);
+      // New rows get their cells by data column, so a custom layout spreads each line first.
+      const lines = custom ? overflow.map((line) => toDataLine(startColumn, line)) : overflow;
+      const start = custom ? 0 : startColumn;
+      if (onPasteRows) onPasteRows(start, lines);
       else {
-        setLocalInserts((current) => [...current, ...overflow.map((line) => pastedLine(columns, startColumn, line))]);
+        setLocalInserts((current) => [...current, ...lines.map((line) => pastedLine(columns, start, line))]);
       }
     }
     return false;
-  }, [appendRows, columns, commitValue, external, onPasteRows, rowCount, shownInserts.length]);
+  }, [appendRows, columns, commitValue, custom, external, onPasteRows, order, rowCount, shownInserts.length, toDataLine]);
 
   /** Actions for the rectangle `rect`, used by the context menu. */
   const rangeActions = useCallback((rect: Rect): GridRangeActions => {
-    const columnIndexes = Array.from({ length: rect.width }, (_, offset) => rect.x + offset).filter((column) => column < columns.length);
+    const columnIndexes = Array.from({ length: rect.width }, (_, offset) => order[rect.x + offset]).filter((column): column is number => column !== undefined);
     const rowIndexes = Array.from({ length: rect.height }, (_, offset) => rect.y + offset);
     const picked = columnIndexes.map((column) => columns[column]).filter((column): column is ColumnDefinition => Boolean(column));
     const values = () => rowIndexes.map((row) => columnIndexes.map((column) => valueAt(row, column) ?? { t: "null" as const }));
@@ -696,6 +783,7 @@ export function ResultGrid({
       rows: rowIndexes.length,
       cells: rowIndexes.length * columnIndexes.length,
       copy: (withHeaders) => write(toTsv(picked, values(), withHeaders)),
+      copyJson: () => write(toJson(picked, values())),
       copyInserts: (table, engine) => {
         const names = picked.map((column) => quoteIdent(column.name)).join(", ");
         write(values().map((row) => `INSERT INTO ${table} (${names}) VALUES (${row.map((value) => sqlLiteral(value, engine)).join(", ")});`).join("\n"));
@@ -717,13 +805,44 @@ export function ResultGrid({
         if (drafted.length > 0) onDropInserts?.(drafted);
       },
     };
-  }, [columns, commitValue, onDropInserts, onMarkRows, onPaste, removedSet, rowCount, valueAt]);
+  }, [columns, commitValue, onDropInserts, onMarkRows, onPaste, order, removedSet, rowCount, valueAt]);
 
   const metas = useMemo(() => columns.map(columnMeta), [columns]);
 
+  // Count, sum, average, min and max of the selected cells, like a spreadsheet's status bar.
+  const computeStats = useCallback((selection: GridSelection): SelectionStats | null => {
+    const rect = selectedRect(selection, order.length, rowCount + shownInserts.length);
+    if (!rect || rect.width * rect.height < 2 || rect.width * rect.height > statsCellLimit) return null;
+    let values = 0;
+    let numeric = 0;
+    let sum = 0;
+    let min = Infinity;
+    let max = -Infinity;
+    for (let row = rect.y; row < rect.y + rect.height; row += 1) {
+      for (let display = rect.x; display < rect.x + rect.width; display += 1) {
+        const column = order[display];
+        if (column === undefined) continue;
+        const value = valueAt(row, column);
+        if (!value || value.t === "null") continue;
+        values += 1;
+        const number = value.t === "int" || value.t === "float" ? Number(value.v) : value.t === "text" && numericType.test(columns[column]?.dataType ?? "") ? Number(value.v) : NaN;
+        if (!Number.isFinite(number)) continue;
+        numeric += 1;
+        sum += number;
+        min = Math.min(min, number);
+        max = Math.max(max, number);
+      }
+    }
+    return { cells: rect.width * rect.height, values, numeric, sum, min, max };
+  }, [columns, order, rowCount, shownInserts.length, valueAt]);
+  useEffect(() => {
+    statsFor.current = computeStats;
+  }, [computeStats]);
+
   // Called for every visible cell on every frame while scrolling: keep it cheap.
   const getCellContent = useCallback((cell: Item): GridCell => {
-    const [col, row] = cell;
+    const [display, row] = cell;
+    const col = order[display] ?? -1;
     const draftIndex = row - rowCount;
     const drafting = draftIndex >= 0 && draftIndex < shownInserts.length;
     // A row that has not arrived yet is not a NULL; draw it as loading.
@@ -769,12 +888,19 @@ export function ResultGrid({
       themeOverride,
       ...extra,
     } as GridCell;
-  }, [cellThemes, external, metas, removedSet, rowCount, rowsRef, shownEdits, shownInserts]);
+  }, [cellThemes, external, metas, order, removedSet, rowCount, rowsRef, shownEdits, shownInserts]);
 
   const onCellEdited = useCallback((cell: Item, newValue: EditableGridCell) => {
     if (newValue.kind !== GridCellKind.Text) return;
-    commitValue(cell[1], cell[0], pastedSql(newValue.data, columns[cell[0]]));
-  }, [columns, commitValue]);
+    const column = order[cell[0]];
+    if (column === undefined) return;
+    commitValue(cell[1], column, pastedSql(newValue.data, columns[column]));
+  }, [columns, commitValue, order]);
+
+  // The header menu holds a display position; the data column behind it names things.
+  const menuIndex = headerMenu ? (order[headerMenu.column] ?? -1) : -1;
+  const menuColumn = columns[menuIndex];
+  const hiddenCount = columns.length - order.length;
 
   return (
     <div ref={wrapRef} className="grid-wrap">
@@ -795,6 +921,14 @@ export function ResultGrid({
           rowHeight={26}
           headerHeight={28}
           minColumnWidth={48}
+          freezeColumns={shownFrozen}
+          onColumnMoved={(from, to) => {
+            const next = order.slice();
+            const [moved] = next.splice(from, 1);
+            if (moved === undefined) return;
+            next.splice(to, 0, moved);
+            changeOrder(next);
+          }}
           maxColumnWidth={2400}
           onColumnResize={onColumnResize}
           onCellEdited={onCellEdited}
@@ -811,13 +945,13 @@ export function ResultGrid({
             const [column, row] = cell;
             if (column < 0 || row < 0) return;
             const point = { x: event.bounds.x + event.localEventX, y: event.bounds.y + event.localEventY };
-            const rect = selectedRect(selectionRef.current, columns.length, rowCount + shownInserts.length);
+            const rect = selectedRect(selectionRef.current, order.length, rowCount + shownInserts.length);
             const inside = rect !== null
               && column >= rect.x && column < rect.x + rect.width
               && row >= rect.y && row < rect.y + rect.height
               && rect.width * rect.height > 1;
             if (inside && rect) {
-              onCellMenu(row, column, point, rangeActions(rect));
+              onCellMenu(row, order[column] ?? column, point, rangeActions(rect));
               return;
             }
             setGridSelection({
@@ -826,10 +960,10 @@ export function ResultGrid({
               current: { cell, range: { x: column, y: row, width: 1, height: 1 }, rangeStack: [] },
             });
             onFocusRow?.(row);
-            onCellMenu(row, column, point, null);
+            onCellMenu(row, order[column] ?? column, point, null);
           } : undefined}
           onHeaderClicked={onSort ? (column) => {
-            const name = columns[column]?.name;
+            const name = columns[order[column] ?? -1]?.name;
             if (name) onSort(name);
           } : undefined}
           onCellActivated={(cell) => {
@@ -844,20 +978,43 @@ export function ResultGrid({
           theme={GRID_THEMES[scheme]}
         />
       ) : null}
-      {headerMenu ? (
-        <ContextMenu
-          x={headerMenu.x}
-          y={headerMenu.y}
-          onClose={() => setHeaderMenu(null)}
-          items={[
-            { label: t("grid.fitColumn"), run: () => refit(headerMenu.column) },
-            { label: t("grid.fitAllColumns"), run: () => refit() },
-            ...(onSort && columns[headerMenu.column]
-              ? ["separator" as const, { label: t("grid.sortByColumn"), run: () => onSort(columns[headerMenu.column]?.name ?? "") }]
-              : []),
-          ]}
-        />
+      {stats ? (
+        <div className="selection-stats" aria-live="polite">
+          <span>{plural("grid.stats.cells", stats.cells)}</span>
+          {stats.values < stats.cells ? <span>{plural("grid.stats.values", stats.values)}</span> : null}
+          {stats.numeric > 0 ? (
+            <>
+              <span>{t("grid.stats.sum")} <b>{statNumber(stats.sum)}</b></span>
+              <span>{t("grid.stats.avg")} <b>{statNumber(stats.sum / stats.numeric)}</b></span>
+              <span>{t("grid.stats.min")} <b>{statNumber(stats.min)}</b></span>
+              <span>{t("grid.stats.max")} <b>{statNumber(stats.max)}</b></span>
+            </>
+          ) : null}
+        </div>
       ) : null}
+      {/* Drawn on the page, not in the grid: the grid's CSS containment would offset a fixed menu. */}
+      {headerMenu
+        ? createPortal(
+            <ContextMenu
+              x={headerMenu.x}
+              y={headerMenu.y}
+              onClose={() => setHeaderMenu(null)}
+              items={[
+                { label: t("grid.fitColumn"), run: () => refit(menuIndex) },
+                { label: t("grid.fitAllColumns"), run: () => refit() },
+                "separator" as const,
+                { label: t("grid.freezeTo", { column: menuColumn?.name ?? "" }), run: () => setFrozen(headerMenu.column + 1) },
+                ...(shownFrozen > 0 ? [{ label: t("grid.unfreeze"), run: () => setFrozen(0) }] : []),
+                "separator" as const,
+                { label: t("grid.hideColumn", { column: menuColumn?.name ?? "" }), disabled: order.length <= 1, run: () => changeOrder(order.filter((item) => item !== menuIndex)) },
+                ...(hiddenCount > 0 ? [{ label: plural("grid.showHidden", hiddenCount), run: () => changeOrder([...order, ...columns.map((_, item) => item).filter((item) => !order.includes(item))]) }] : []),
+                ...(custom ? [{ label: t("grid.resetLayout"), run: () => changeOrder(columns.map((_, item) => item)) }] : []),
+                ...(onSort && menuColumn ? ["separator" as const, { label: t("grid.sortByColumn"), run: () => onSort(menuColumn.name) }] : []),
+              ]}
+            />,
+            document.body,
+          )
+        : null}
     </div>
   );
 }

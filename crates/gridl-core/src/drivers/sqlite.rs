@@ -28,6 +28,8 @@ use crate::value::SqlValue;
 struct Session {
     pool: SqlitePool,
     editor: tokio::sync::Mutex<Option<PoolConnection<Sqlite>>>,
+    /// Kept apart from the editor so browsing tables never waits behind it.
+    browser: tokio::sync::Mutex<Option<PoolConnection<Sqlite>>>,
 }
 
 /// SQLite adapter. Each connection id owns one pool.
@@ -86,7 +88,11 @@ impl DatabaseDriver for SqliteDriver {
             .await
             .map_err(db_err)?;
         let id = config.connection_id()?;
-        let session = Arc::new(Session { pool, editor: tokio::sync::Mutex::new(None) });
+        let session = Arc::new(Session {
+            pool,
+            editor: tokio::sync::Mutex::new(None),
+            browser: tokio::sync::Mutex::new(None),
+        });
         let replaced = {
             let mut sessions = self.sessions.write().map_err(|_| CoreError::LockPoisoned)?;
             sessions.insert(id.as_str().to_owned(), session)
@@ -224,7 +230,8 @@ impl DatabaseDriver for SqliteDriver {
             return Ok(finished(request, Vec::new(), 0, 0, started, true, false));
         }
         let session = self.session(id)?;
-        let mut editor = session.editor.lock().await;
+        let slot = if request.browse { &session.browser } else { &session.editor };
+        let mut editor = slot.lock().await;
         if editor.is_none() {
             *editor = Some(session.pool.acquire().await.map_err(db_err)?);
         }
@@ -332,8 +339,10 @@ impl DatabaseDriver for SqliteDriver {
 }
 
 async fn close_session(session: &Session) {
-    if let Ok(mut editor) = session.editor.try_lock() {
-        editor.take();
+    for slot in [&session.editor, &session.browser] {
+        if let Ok(mut connection) = slot.try_lock() {
+            connection.take();
+        }
     }
     let _ = tokio::time::timeout(Duration::from_secs(3), session.pool.close()).await;
 }

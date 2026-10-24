@@ -2,9 +2,10 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { diagnosticFor } from "../editor/diagnostics";
 import { setDialect, type ColumnDefinition, type SqlValue, type TableSchema } from "../lib/api";
 import { describeError, isConnectionLost } from "../lib/errors";
+import { formatNumber, t } from "../lib/i18n";
 import { exportRows, sqlLiteral, toTsv } from "../workspace/export";
 import { nextSort, orderClause, whereClause, type TableFilter } from "../workspace/filters";
-import { describeTabChanges, primaryKeyList, viewKey } from "../workspace/model";
+import { describeTabChanges, pageStatus, primaryKeyList, rowEstimateSql, viewKey } from "../workspace/model";
 
 const column = (name: string, primaryKey = false): ColumnDefinition => ({ name, dataType: "text", nullable: !primaryKey, primaryKey, defaultValue: null, options: [] });
 const filter = (op: TableFilter["op"], value = "", name = "name"): TableFilter => ({ id: "1", column: name, op, value, enabled: true });
@@ -83,5 +84,25 @@ describe("pending edits across pages", () => {
   it("mentions edits kept on other pages", () => {
     const stash = { key: "k", label: "página 2", edit: { inserts: [], removed: [1], edits: {} }, rows: [], columns: [] };
     expect(describeTabChanges(undefined, [stash])).toBe("También hay cambios en 1 página más. Guarda para aplicar todo.");
+  });
+});
+
+describe("table pages", () => {
+  const page = { page: 1, pageSize: 100, shown: 100 };
+  const numbers = { from: formatNumber(101), to: formatNumber(200) };
+
+  it("shows the range at once and the total when it is known", () => {
+    expect(pageStatus({ ...page, total: null }, false, 12)).toBe(`${t("app.status.rangeCounting", numbers)} · 12 ms`);
+    expect(pageStatus({ ...page, total: 5000 }, false, 12)).toBe(`${t("app.status.range", { ...numbers, total: formatNumber(5000) })} · 12 ms`);
+    expect(pageStatus({ ...page, total: 5000000, approximate: true }, false, 0)).toBe(t("app.status.rangeApprox", { ...numbers, total: formatNumber(5000000) }));
+    expect(pageStatus({ ...page, shown: 0, total: 0 }, true, 3)).toBe(`${t("app.status.noMatches")} · 3 ms`);
+  });
+
+  it("reads the row estimate from the catalog", () => {
+    expect(rowEstimateSql(items, "postgres")).toBe(`select reltuples::bigint from pg_catalog.pg_class where oid = to_regclass('"public"."t"')`);
+    expect(rowEstimateSql({ ...items, schema: "shop", name: "it's" }, "mysql")).toBe(
+      "select table_rows from information_schema.tables where table_schema = convert(X'73686f70' using utf8mb4) and table_name = convert(X'69742773' using utf8mb4)",
+    );
+    expect(rowEstimateSql(items, "sqlite")).toBeNull();
   });
 });

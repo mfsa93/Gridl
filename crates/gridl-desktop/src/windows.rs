@@ -115,6 +115,50 @@ pub async fn open_home_window(app: AppHandle, command: String) -> Result<String,
     Ok(label)
 }
 
+/// What a `gridl://open?...` link carries to the window that shows it.
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenLink {
+    pub connection: String,
+    pub name: String,
+    pub sql: String,
+    pub title: String,
+}
+
+/// Handles `gridl://open?connection=…&name=…&sql=…&title=…`. The SQL opens in a
+/// new tab of that connection, never runs by itself. A window that already has
+/// the connection gets the tab; otherwise a new window connects first.
+pub fn open_link(app: &AppHandle, url: &tauri::Url) {
+    if url.scheme() != "gridl" || url.host_str() != Some("open") {
+        return;
+    }
+    let mut link = OpenLink {
+        connection: String::new(),
+        name: String::new(),
+        sql: String::new(),
+        title: String::new(),
+    };
+    for (key, value) in url.query_pairs() {
+        match key.as_ref() {
+            "connection" => link.connection = value.into_owned(),
+            "name" => link.name = value.into_owned(),
+            "sql" => link.sql = value.into_owned(),
+            "title" => link.title = value.into_owned(),
+            _ => {}
+        }
+    }
+    let state = app.state::<AppState>();
+    if let Some(owner) = state.owner(&link.connection) {
+        if focus(app, &owner) {
+            emit_to_window(app, &owner, "gridl-open-link", link);
+            return;
+        }
+    }
+    let label = new_label(app);
+    let _ =
+        build_window(app, &label, format!("index.html#link={}", encode_component(url.as_str())));
+}
+
 fn build_window(app: &AppHandle, label: &str, url: String) -> Result<(), String> {
     let builder = WebviewWindowBuilder::new(app, label, WebviewUrl::App(url.into()))
         .title("Gridl")

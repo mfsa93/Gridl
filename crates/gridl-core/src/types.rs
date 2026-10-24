@@ -352,6 +352,9 @@ pub struct QueryRequest {
     pub chunk_rows: usize,
     pub max_rows: u64,
     pub cancel: Arc<AtomicBool>,
+    /// A read for the table browser. It runs on its own connection, so a long
+    /// statement in the SQL editor does not hold up opening tables.
+    pub browse: bool,
 }
 
 impl QueryRequest {
@@ -387,7 +390,7 @@ impl QueryRequest {
                 "el límite de filas debe ser de 1 a {MAX_STREAM_ROWS}"
             )));
         }
-        Ok(Self { query_id, sql, params, chunk_rows, max_rows, cancel })
+        Ok(Self { query_id, sql, params, chunk_rows, max_rows, cancel, browse: false })
     }
 
     /// A query whose rows go to a file instead of the grid. It has no row cap,
@@ -401,6 +404,12 @@ impl QueryRequest {
         let mut request = Self::new(query_id, sql, Vec::new(), chunk_rows, 1, cancel)?;
         request.max_rows = u64::MAX;
         Ok(request)
+    }
+
+    /// Runs the query on the table browser's connection instead of the editor's.
+    pub fn browsing(mut self) -> Self {
+        self.browse = true;
+        self
     }
 }
 

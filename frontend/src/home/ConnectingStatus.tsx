@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { t } from "../lib/i18n";
+import { LogoLoader } from "../workspace/LogoLoader";
 
 export type ConnectingState = { id: string; stage: "connect" | "schema"; started: number };
 
@@ -18,7 +19,7 @@ export function ConnectingStatus({ state, onCancel }: { state: ConnectingState; 
 
   return (
     <div className="card-connecting" role="status" aria-live="polite" title={slow ?? undefined}>
-      <span className="connecting-spinner" aria-hidden="true" />
+      <LogoLoader size={22} />
       <span className="card-connecting-text">
         {state.stage === "schema" ? t("home.connecting.schema") : t("home.connecting.server")}
         {seconds >= 2 ? ` · ${t("home.connecting.elapsed", { seconds })}` : ""}

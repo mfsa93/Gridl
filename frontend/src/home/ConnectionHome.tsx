@@ -5,20 +5,24 @@ import {
   Eye,
   EyeOff,
   Folder,
+  FolderSync,
   Layers3,
   LockKeyhole,
   Plus,
   Search,
   Server,
   ShieldCheck,
+  Unlink,
+  Users,
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { ConnectingStatus, type ConnectingState } from "./ConnectingStatus";
-import { errorMessage, type BrowseKind, type ConnectionCatalog, type ConnectionConfig, type DatabaseEngine, type TestResult, type TlsMode } from "../lib/api";
+import { errorMessage, type BrowseKind, type ConnectionCatalog, type ConnectionConfig, type DatabaseEngine, type TeamState, type TestResult, type TlsMode } from "../lib/api";
 import { environmentLabel } from "../lib/environments";
 import { SafetyFields } from "./SafetyFields";
 import { blankDraft, draftFromProfile, subtitle, type Draft } from "./draft";
+import { ENGINES } from "./engines";
 import { plural, t } from "../lib/i18n";
 
 export type HomeCommand = { nonce: number; kind: "new-connection" | "new-group" };
@@ -29,19 +33,6 @@ type Phase =
   | { kind: "form"; draft: Draft }
   | { kind: "group" };
 
-type EngineOption = {
-  id: DatabaseEngine;
-  short: string;
-  name: string;
-  color: string;
-  description: string;
-};
-
-const ENGINES: EngineOption[] = [
-  { id: "postgres", short: "Pg", name: "PostgreSQL", color: "#3b82f6", description: t("home.engine.postgres") },
-  { id: "mysql", short: "My", name: "MySQL / MariaDB", color: "#f59e0b", description: t("home.engine.mysql") },
-  { id: "sqlite", short: "Sl", name: "SQLite", color: "#8b5cf6", description: t("home.engine.sqlite") },
-];
 
 type Props = {
   catalog: ConnectionCatalog;
@@ -60,7 +51,16 @@ type Props = {
   onBrowse: (kind: BrowseKind) => Promise<string | null>;
   onTest: (draft: Draft) => Promise<TestResult>;
   pendingCommand: HomeCommand | null;
+  /** The team space, when a team folder is linked. */
+  team: TeamState;
+  onLinkTeam: () => void;
+  onUnlinkTeam: () => void;
+  onShare: (profile: ConnectionConfig) => void;
+  onUnshare: (profile: ConnectionConfig) => void;
 };
+
+/** The sidebar space that lists the team's connections. */
+const teamSpace = "\u0000team";
 
 export function ConnectionHome({
   catalog,
@@ -77,6 +77,11 @@ export function ConnectionHome({
   onBrowse,
   onTest,
   pendingCommand,
+  team,
+  onLinkTeam,
+  onUnlinkTeam,
+  onShare,
+  onUnshare,
 }: Props) {
   const [phase, setPhase] = useState<Phase>({ kind: "list" });
   const [query, setQuery] = useState("");
@@ -101,14 +106,17 @@ export function ConnectionHome({
     setPhase(pendingCommand.kind === "new-connection" ? { kind: "choose", group: "", draft: null } : { kind: "group" });
   }
 
+  const teamIds = useMemo(() => new Set(team.connections.map((profile) => profile.id)), [team.connections]);
+  // Team connections not saved here yet show alongside, and open their form to add a password.
+  const teamOnly = useMemo(() => team.connections.filter((profile) => !catalog.profiles.some((local) => local.id === profile.id)), [catalog.profiles, team.connections]);
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    return catalog.profiles.filter((profile) => {
-      if (space !== "all" && profile.group !== space) return false;
+    return [...catalog.profiles, ...teamOnly].filter((profile) => {
+      if (space === teamSpace ? !teamIds.has(profile.id) : space !== "all" && profile.group !== space) return false;
       if (!needle) return true;
       return [profile.name, profile.database, profile.host ?? "", profile.engine].join(" ").toLowerCase().includes(needle);
     });
-  }, [catalog.profiles, query, space]);
+  }, [catalog.profiles, query, space, teamIds, teamOnly]);
 
   const showNotice = (message: string) => {
     setNotice(message);
@@ -151,7 +159,7 @@ export function ConnectionHome({
               <span>{t("home.spaces")}</span>
             </div>
             <button type="button" className={space === "all" ? "nav-row active" : "nav-row"} onClick={() => setSpace("all")}>
-              <Layers3 size={16} /> {t("home.allConnections")} <span>{catalog.profiles.length}</span>
+              <Layers3 size={16} /> {t("home.allConnections")} <span>{catalog.profiles.length + teamOnly.length}</span>
             </button>
             <div className="sidebar-heading group-heading">
               <span>{t("home.groups")}</span>
@@ -169,6 +177,24 @@ export function ConnectionHome({
                 </div>
               );
             })}
+            <div className="sidebar-heading group-heading">
+              <span>{t("home.team.heading")}</span>
+              {team.folder ? (
+                <button type="button" className="tiny-icon" aria-label={t("home.team.unlink")} title={t("home.team.unlinkTitle", { folder: team.folder })} onClick={onUnlinkTeam}>
+                  <Unlink size={14} />
+                </button>
+              ) : null}
+            </div>
+            {team.folder ? (
+              <button type="button" className={space === teamSpace ? "nav-row active" : "nav-row"} title={team.folder} onClick={() => setSpace(teamSpace)}>
+                <Users size={16} /> {team.folder.split("/").filter(Boolean).pop() ?? t("home.team.heading")} <span>{team.connections.length}</span>
+              </button>
+            ) : (
+              <button type="button" className="nav-row team-link" title={t("home.team.linkTitle")} onClick={onLinkTeam}>
+                <FolderSync size={16} /> {t("home.team.link")}
+              </button>
+            )}
+            {team.error ? <p className="team-error">{team.error}</p> : null}
             <div className="sidebar-footer">
               <ShieldCheck size={14} /> {t("home.keychainNote")}
             </div>
@@ -177,7 +203,7 @@ export function ConnectionHome({
           <section className="connections-panel">
             <div className="panel-heading">
               <div>
-                <h2>{space === "all" ? t("home.allConnections") : space}</h2>
+                <h2>{space === "all" ? t("home.allConnections") : space === teamSpace ? t("home.team.heading") : space}</h2>
                 <p>{plural("home.connectionCount", filtered.length)}</p>
               </div>
             </div>
@@ -194,6 +220,11 @@ export function ConnectionHome({
                       openMenu(event, [
                         { label: t("home.menu.connect"), run: () => void onOpen(profile) },
                         { label: t("home.menu.openWindow"), run: () => onOpenWindow(profile) },
+                        ...(team.folder
+                          ? [teamIds.has(profile.id)
+                              ? { label: t("home.team.unshare"), run: () => onUnshare(profile) }
+                              : { label: t("home.team.share"), run: () => onShare(profile) }]
+                          : []),
                         { label: t("home.menu.edit"), run: () => setPhase({ kind: "form", draft: draftFromProfile(profile) }) },
                         {
                           label: t("home.menu.duplicate"),
@@ -218,7 +249,11 @@ export function ConnectionHome({
                       disabled={busy || Boolean(opening)}
                       aria-busy={Boolean(opening)}
                       onClick={(event) => {
-                        if (event.metaKey || event.ctrlKey) onOpenWindow(profile);
+                        if (teamOnly.includes(profile)) {
+                          // First use on this Mac: the form asks for the password, kept in this keychain.
+                          setPhase({ kind: "form", draft: draftFromProfile(profile) });
+                          setNotice(t("home.team.firstUse", { name: profile.name }));
+                        } else if (event.metaKey || event.ctrlKey) onOpenWindow(profile);
                         else void onOpen(profile);
                       }}
                     >
@@ -235,8 +270,13 @@ export function ConnectionHome({
                         <div className={`env-pill env-${profile.safety.environment}`}>{environmentLabel(profile.safety.environment)}</div>
                       ) : null}
                       <div className="connection-type">{engine?.name ?? profile.engine}</div>
+                      {teamIds.has(profile.id) ? (
+                        <div className="team-pill" title={team.folder ?? undefined}>
+                          <Users size={12} /> {teamOnly.includes(profile) ? t("home.team.notHere") : t("home.team.badge")}
+                        </div>
+                      ) : null}
                       <div className="connection-last">
-                        {t("home.saved")}
+                        {teamOnly.includes(profile) ? t("home.team.fromTeam") : t("home.saved")}
                         <span>{profile.group ?? t("home.noGroup")}</span>
                       </div>
                       <ChevronRight className="chevron" size={18} />

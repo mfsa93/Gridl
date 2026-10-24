@@ -52,7 +52,7 @@ function jsonValue(value: SqlValue | undefined): unknown {
   return value.v;
 }
 
-function toJson(columns: ColumnDefinition[], rows: SqlValue[][]): string {
+export function toJson(columns: ColumnDefinition[], rows: SqlValue[][]): string {
   const records = rows.map((row) => {
     const record: Record<string, unknown> = {};
     columns.forEach((column, index) => {

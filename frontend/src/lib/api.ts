@@ -283,6 +283,8 @@ export async function executeQuery(
     authorized?: boolean;
     /** Stop after this many rows; the result comes back `truncated`. */
     maxRows?: number;
+    /** A table browser read, run on its own connection so the editor never holds it up. */
+    browse?: boolean;
   },
   onChunk: (chunk: RowChunk) => void,
 ): Promise<QueryResult> {
@@ -393,4 +395,38 @@ export function backupDatabase(request: { connectionId: string; path: string; pa
 
 export function restoreDatabase(request: { connectionId: string; path: string; password: string | null; authorized?: boolean }): Promise<{ durationMs: number }> {
   return invoke<{ durationMs: number }>("restore_database", { request }).catch(rethrowGuard);
+}
+
+/** A saved query kept in the team file. */
+export type TeamQuery = { id: string; name: string; sql: string; at: number };
+
+/** The team space: shared connections and their saved queries, from a file in a synced folder. */
+export type TeamState = {
+  folder: string | null;
+  connections: ConnectionConfig[];
+  queries: Record<string, TeamQuery[]>;
+  modified: number | null;
+  error: string | null;
+};
+
+export const emptyTeam: TeamState = { folder: null, connections: [], queries: {}, modified: null, error: null };
+
+export function teamState(): Promise<TeamState> {
+  return invoke("team_state");
+}
+
+export function teamLink(folder: string | null): Promise<TeamState> {
+  return invoke("team_link", { folder });
+}
+
+export function teamShare(config: ConnectionConfig): Promise<TeamState> {
+  return invoke("team_share", { config });
+}
+
+export function teamUnshare(connectionId: string): Promise<TeamState> {
+  return invoke("team_unshare", { connectionId });
+}
+
+export function teamSaveQueries(connectionId: string, queries: TeamQuery[]): Promise<TeamState> {
+  return invoke("team_save_queries", { connectionId, queries });
 }
