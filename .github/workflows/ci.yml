@@ -5,14 +5,9 @@ name: CI
 # checks; when only docs or the license changed, or the PR is develop into
 # master (the same code develop's PRs already tested), the jobs are skipped,
 # which counts as passing.
-# Pushes to develop run too: a PR can restore caches from its base branch, so
-# that run leaves the Rust cache warm for the next PR. Its jobs carry
-# "(cache)" in the name so they never stand in for a PR's required checks.
+# cache.yml keeps the Rust cache warm on develop for the next PR.
 on:
   pull_request:
-  push:
-    branches:
-      - develop
 
 # A newer push to the same branch or PR cancels the run still in progress.
 concurrency:
@@ -21,7 +16,7 @@ concurrency:
 
 jobs:
   changes:
-    name: Changes${{ github.event_name == 'push' && ' (cache)' || '' }}
+    name: Changes
     runs-on: ubuntu-latest
     outputs:
       code: ${{ steps.filter.outputs.code == 'true' && !(github.base_ref == 'master' && github.head_ref == 'develop') }}
@@ -38,7 +33,7 @@ jobs:
               - "!LICENSE"
 
   core:
-    name: Rust core${{ github.event_name == 'push' && ' (cache)' || '' }}
+    name: Rust core
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
@@ -92,37 +87,32 @@ jobs:
       # Compiled dependencies carry over between runs; only changed crates rebuild.
       - uses: Swatinem/rust-cache@v2
         with:
-          key: core
+          shared-key: core
       - run: cargo fmt --all --check
       - run: cargo clippy -p gridl-core --all-targets -- -D warnings
       - run: cargo test -p gridl-core
 
   desktop:
-    name: Tauri shell${{ github.event_name == 'push' && ' (cache)' || '' }}
+    name: Tauri shell
     needs: changes
     if: needs.changes.outputs.code == 'true'
-    runs-on: ubuntu-latest
+    # macOS ships WebKit, so no system packages to download from the
+    # Ubuntu mirrors, which have stalled this job for many minutes.
+    runs-on: macos-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.98.0
         with:
           components: clippy
-      # The WebKit and GTK headers Tauri builds against. Plain apt-get: the
-      # cached-packages action hung while installing on the current image.
-      - name: System packages
-        timeout-minutes: 8
-        run: |
-          sudo apt-get -o DPkg::Lock::Timeout=120 update
-          sudo DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=120 install -y --no-install-recommends libwebkit2gtk-4.1-dev build-essential libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf libdbus-1-dev pkg-config
       - uses: Swatinem/rust-cache@v2
         with:
-          key: desktop
+          shared-key: desktop
       - run: cargo clippy -p gridl-desktop --all-targets -- -D warnings
       - run: cargo test -p gridl-desktop
 
   frontend:
-    name: Frontend${{ github.event_name == 'push' && ' (cache)' || '' }}
+    name: Frontend
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
