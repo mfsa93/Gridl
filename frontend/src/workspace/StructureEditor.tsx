@@ -141,16 +141,18 @@ export function StructureEditor({ table, engine, busy, error, onApply, draft, on
                   </td>
                   <td>
                     <div className="type-cell">
-                      <select
-                        aria-label={t("dialog.type")}
-                        value={row.dataType}
-                        disabled={busy || row.dropped || locked}
-                        onChange={(event) => patch(row.key, { dataType: event.target.value, length: "", precision: "", scale: "" })}
-                      >
-                        {options.map((item) => (
-                          <option key={item.name} value={item.name}>{item.name}</option>
-                        ))}
-                      </select>
+                      <span className="type-pick" data-value={row.dataType}>
+                        <select
+                          aria-label={t("dialog.type")}
+                          value={row.dataType}
+                          disabled={busy || row.dropped || locked}
+                          onChange={(event) => patch(row.key, { dataType: event.target.value, length: "", precision: "", scale: "" })}
+                        >
+                          {options.map((item) => (
+                            <option key={item.name} value={item.name}>{item.name}</option>
+                          ))}
+                        </select>
+                      </span>
                       {spec?.kind === "length" ? (
                         <input
                           aria-label={t("dialog.length")}

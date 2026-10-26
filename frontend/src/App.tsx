@@ -5,6 +5,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { splitStatements } from "./editor/activeSql";
 import { SqlDefinition } from "./editor/SqlDefinition";
 import { SqlEditor, type SqlEditorHandle } from "./editor/SqlEditor";
+import { editorFailure } from "./editor/failure";
+import { recordError } from "./lib/errorLog";
 import { ResultGrid, type GridRangeActions } from "./grid/ResultGrid";
 import type { ConnectingState } from "./home/ConnectingStatus";
 import { ConnectionHome, type HomeCommand } from "./home/ConnectionHome";
@@ -2682,6 +2684,10 @@ export function App() {
                 onRun={() => void runQuery(tab)}
                 onRunAll={() => runScript(tab)}
                 onFormat={() => formatEditor(tab)}
+                onError={(error) => {
+                  recordError("editor", error);
+                  setStatus(tab, t("app.editor.failed", { message: editorFailure(error) }));
+                }}
                 checker={checker}
               />
               {sqlView.ran ? (

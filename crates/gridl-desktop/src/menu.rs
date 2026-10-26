@@ -97,6 +97,14 @@ pub fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
         ],
     )?;
 
+    let export_errors = MenuItem::with_id(
+        app,
+        "export-errors",
+        tr!("Export Error Log…", "Exportar registro de errores…"),
+        true,
+        None::<&str>,
+    )?;
+
     let menu = Menu::with_items(
         app,
         &[
@@ -151,6 +159,8 @@ pub fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
                 )?],
             )?,
             &window,
+            #[cfg(target_os = "macos")]
+            &Submenu::with_items(app, tr!("Help", "Ayuda"), true, &[&export_errors])?,
             #[cfg(not(target_os = "macos"))]
             &Submenu::with_items(
                 app,
@@ -169,6 +179,8 @@ pub fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
                         true,
                         None::<&str>,
                     )?,
+                    &PredefinedMenuItem::separator(app)?,
+                    &export_errors,
                 ],
             )?,
         ],

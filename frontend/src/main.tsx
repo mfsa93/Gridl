@@ -4,10 +4,12 @@ import "@glideapps/glide-data-grid/dist/index.css";
 import { App } from "./App";
 import { setEngines } from "./engines";
 import { listEngines } from "./lib/api";
+import { captureErrors } from "./lib/errorLog";
 import { locale, t } from "./lib/i18n";
 import "./styles.css";
 
 document.documentElement.lang = locale;
+captureErrors();
 
 // The macOS window has an overlay title bar and sidebar vibrancy (see tauri.conf.json).
 const isTauri = "__TAURI_INTERNALS__" in window;

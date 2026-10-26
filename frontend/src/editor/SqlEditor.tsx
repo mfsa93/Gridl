@@ -35,6 +35,8 @@ type SqlEditorProps = {
   onRun: () => void;
   onRunAll?: () => void;
   onFormat?: () => void;
+  /** Called with errors the editor caught in its own code or extensions. */
+  onError?: (error: unknown) => void;
   /** Parses statements on the server to underline errors while typing. */
   checker?: SqlChecker | null;
   visible?: boolean;
@@ -76,7 +78,7 @@ function sqlExtension(engine: DatabaseEngine, schema: Record<string, string[]>) 
 }
 
 export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(function SqlEditor(
-  { engine, schema, initialSql = "", onChange, onRun, onRunAll, onFormat, checker = null, visible = true },
+  { engine, schema, initialSql = "", onChange, onRun, onRunAll, onFormat, onError, checker = null, visible = true },
   ref,
 ) {
   const scheme = useColorScheme();
@@ -86,10 +88,12 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(function Sq
   const onRunRef = useRef(onRun);
   const onRunAllRef = useRef(onRunAll);
   const onFormatRef = useRef(onFormat);
+  const onErrorRef = useRef(onError);
   const engineRef = useRef(engine);
   const checkerRef = useRef(checker);
   checkerRef.current = checker;
   onFormatRef.current = onFormat;
+  onErrorRef.current = onError;
   engineRef.current = engine;
   const onChangeRef = useRef(onChange);
   onRunRef.current = onRun;
@@ -157,6 +161,10 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(function Sq
         extensions: [
           lineNumbers(),
           history(),
+          EditorView.exceptionSink.of((error) => {
+            console.error(error);
+            onErrorRef.current?.(error);
+          }),
           EditorView.updateListener.of((update) => {
             if (update.docChanged) onChangeRef.current?.(update.state.doc.toString());
           }),
