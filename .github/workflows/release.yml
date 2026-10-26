@@ -2,10 +2,19 @@ name: Release
 
 # Push a tag like v0.2.1 to build, sign, and publish a release. Installed copies
 # of Gridl find it through latest.json and offer to update.
+# Pushes to master build the same app without publishing, to keep the Rust
+# cache warm: a tag's run can only restore caches saved on the default branch.
 on:
   push:
+    branches:
+      - master
     tags:
       - "v*"
+
+# A newer push to master cancels the cache build still running; tags never cancel.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref == 'refs/heads/master' }}
 
 permissions:
   contents: write
@@ -26,6 +35,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.98.0
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
+      # Both architectures' compiled dependencies, saved from master only.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release
+          save-if: ${{ github.ref == 'refs/heads/master' }}
       - run: pnpm install --frozen-lockfile
       - uses: tauri-apps/tauri-action@v0
         env:
@@ -36,8 +50,9 @@ jobs:
           projectPath: crates/gridl-desktop
           tauriScript: ../../frontend/node_modules/.bin/tauri
           args: --target universal-apple-darwin
-          tagName: ${{ github.ref_name }}
-          releaseName: Gridl ${{ github.ref_name }}
+          # Empty on master: build only, no release.
+          tagName: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+          releaseName: ${{ github.ref_type == 'tag' && format('Gridl {0}', github.ref_name) || '' }}
           releaseBody: Download the .dmg to install, or run the one-line installer from the README. Installed copies update themselves.
           releaseDraft: false
           prerelease: false

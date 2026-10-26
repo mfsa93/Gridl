@@ -1,0 +1,45 @@
+name: Cache
+
+# Builds what CI builds after every merge into develop, without running
+# anything. A pull request can restore caches saved on its base branch, so
+# the next PR's CI starts from compiled dependencies. Its own job names keep
+# it from standing in for the checks branch protection requires.
+on:
+  push:
+    branches:
+      - develop
+
+concurrency:
+  group: cache-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core:
+    name: Warm Rust core
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: core
+      - run: cargo clippy -p gridl-core --all-targets -- -D warnings
+      - run: cargo test -p gridl-core --no-run
+
+  desktop:
+    name: Warm Tauri shell
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: desktop
+      - run: cargo clippy -p gridl-desktop --all-targets -- -D warnings
+      - run: cargo test -p gridl-desktop --no-run

@@ -1,11 +1,11 @@
 name: CI
 
 # Checks only: builds and tests, never packages. Releases come from release.yml on v* tags.
-# Pull requests only: master and develop change through PRs, and a PR's run
-# already tests the merged result, so a second run on push would repeat it.
 # Every pull request gets a run, because branch protection requires these
-# checks; when only docs or the license changed, the jobs are skipped, which
-# counts as passing.
+# checks; when only docs or the license changed, or the PR is develop into
+# master (the same code develop's PRs already tested), the jobs are skipped,
+# which counts as passing.
+# cache.yml keeps the Rust cache warm on develop for the next PR.
 on:
   pull_request:
 
@@ -19,7 +19,7 @@ jobs:
     name: Changes
     runs-on: ubuntu-latest
     outputs:
-      code: ${{ steps.filter.outputs.code }}
+      code: ${{ steps.filter.outputs.code == 'true' && !(github.base_ref == 'master' && github.head_ref == 'develop') }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -87,7 +87,7 @@ jobs:
       # Compiled dependencies carry over between runs; only changed crates rebuild.
       - uses: Swatinem/rust-cache@v2
         with:
-          key: core
+          shared-key: core
       - run: cargo fmt --all --check
       - run: cargo clippy -p gridl-core --all-targets -- -D warnings
       - run: cargo test -p gridl-core
@@ -96,23 +96,18 @@ jobs:
     name: Tauri shell
     needs: changes
     if: needs.changes.outputs.code == 'true'
-    runs-on: ubuntu-latest
+    # macOS ships WebKit, so no system packages to download from the
+    # Ubuntu mirrors, which have stalled this job for many minutes.
+    runs-on: macos-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.98.0
         with:
           components: clippy
-      # The WebKit and GTK headers Tauri builds against, restored from the
-      # cache instead of downloaded from the Ubuntu mirrors on every run.
-      - name: System packages
-        uses: awalsh128/cache-apt-pkgs-action@v1
-        with:
-          packages: libwebkit2gtk-4.1-dev build-essential libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf libdbus-1-dev pkg-config
-          version: tauri-2
       - uses: Swatinem/rust-cache@v2
         with:
-          key: desktop
+          shared-key: desktop
       - run: cargo clippy -p gridl-desktop --all-targets -- -D warnings
       - run: cargo test -p gridl-desktop
 
