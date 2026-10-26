@@ -96,20 +96,15 @@ jobs:
     name: Tauri shell
     needs: changes
     if: needs.changes.outputs.code == 'true'
-    runs-on: ubuntu-latest
+    # macOS ships WebKit, so no system packages to download from the
+    # Ubuntu mirrors, which have stalled this job for many minutes.
+    runs-on: macos-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.98.0
         with:
           components: clippy
-      # The WebKit and GTK headers Tauri builds against. Plain apt-get: the
-      # cached-packages action hung while installing on the current image.
-      - name: System packages
-        timeout-minutes: 8
-        run: |
-          sudo apt-get -o DPkg::Lock::Timeout=120 update
-          sudo DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=120 install -y --no-install-recommends libwebkit2gtk-4.1-dev build-essential libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf libdbus-1-dev pkg-config
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: desktop
