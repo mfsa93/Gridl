@@ -1102,7 +1102,7 @@ html.vibrant .sidebar-card, html.vibrant .explorer, html.vibrant .details-panel 
 .col-action { width: 36px; text-align: center; }
 .type-cell { display: flex; align-items: center; min-width: 180px; }
 .type-cell select { flex: 1; min-width: 0; }
-.type-size { width: 64px; flex: none; text-align: right; }
+.structure-table .type-size { width: 64px; flex: none; text-align: right; }
 .structure-bar {
   display: flex;
   align-items: center;
