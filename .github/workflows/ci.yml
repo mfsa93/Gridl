@@ -1,13 +1,17 @@
 name: CI
 
 # Checks only: builds and tests, never packages. Releases come from release.yml on v* tags.
-# Pull requests only: master and develop change through PRs, and a PR's run
-# already tests the merged result, so a second run on push would repeat it.
 # Every pull request gets a run, because branch protection requires these
-# checks; when only docs or the license changed, the jobs are skipped, which
-# counts as passing.
+# checks; when only docs or the license changed, or the PR is develop into
+# master (the same code develop's PRs already tested), the jobs are skipped,
+# which counts as passing.
+# Pushes to develop run too: a PR can restore caches from its base branch, so
+# that run leaves the Rust cache warm for the next PR.
 on:
   pull_request:
+  push:
+    branches:
+      - develop
 
 # A newer push to the same branch or PR cancels the run still in progress.
 concurrency:
@@ -19,7 +23,7 @@ jobs:
     name: Changes
     runs-on: ubuntu-latest
     outputs:
-      code: ${{ steps.filter.outputs.code }}
+      code: ${{ steps.filter.outputs.code == 'true' && !(github.base_ref == 'master' && github.head_ref == 'develop') }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -103,13 +107,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.98.0
         with:
           components: clippy
-      # The WebKit and GTK headers Tauri builds against, restored from the
-      # cache instead of downloaded from the Ubuntu mirrors on every run.
+      # The WebKit and GTK headers Tauri builds against. Plain apt-get: the
+      # cached-packages action hung while installing on the current image.
       - name: System packages
-        uses: awalsh128/cache-apt-pkgs-action@v1
-        with:
-          packages: libwebkit2gtk-4.1-dev build-essential libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf libdbus-1-dev pkg-config
-          version: tauri-2
+        timeout-minutes: 8
+        run: |
+          sudo apt-get -o DPkg::Lock::Timeout=120 update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=120 install -y --no-install-recommends libwebkit2gtk-4.1-dev build-essential libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf libdbus-1-dev pkg-config
       - uses: Swatinem/rust-cache@v2
         with:
           key: desktop
