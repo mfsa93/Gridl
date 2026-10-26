@@ -31,6 +31,7 @@ pub fn run() {
                     | "close-tab"
                     | "reload"
                     | "check-updates"
+                    | "export-errors"
             ) {
                 // Only the window the user is looking at acts on the menu.
                 if let Some(label) = windows::focused_label(app) {
