@@ -2,7 +2,7 @@ import { engineSpec } from "./engines";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { ArchiveRestore, ArrowLeft, Bookmark, Braces, CircleStop, FileCode, GitCompareArrows, Link2, Network, Route, Undo2, Database, Eye, FastForward, Folder, PanelLeft, Pencil, Play, Plus, Search, TerminalSquare, Trash2, Upload, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { splitStatements } from "./editor/activeSql";
+import { commandTag, splitStatements, withoutComments } from "./editor/activeSql";
 import { SqlDefinition } from "./editor/SqlDefinition";
 import { SqlEditor, type SqlEditorHandle } from "./editor/SqlEditor";
 import { editorFailure } from "./editor/failure";
@@ -40,7 +40,7 @@ import { hideSplash } from "./splash";
 import { ConnectionSwitcher } from "./workspace/ConnectionSwitcher";
 import { SchemaPicker } from "./workspace/SchemaPicker";
 import { StructureEditor } from "./workspace/StructureEditor";
-import { isSqlTab, kindLabel, largeTableRows, nextSqlTabId, pageSizes, pageStatus, rowEstimateSql, sqlTabId, sqlTabNumber, countValue, clonePending, pendingEmpty, viewKey, viewLabel, primaryKeyList, emptyView, tableTabId, showsRows, objectGroups, schemaMap, describeTabChanges, pendingSummary, pastedRow, isHeaderRow, mergeColumns, structureKey, sameDisplayedRow, fieldsFromValues, fieldsFromDraft, namesFromTables, keepDefinition, withTable, scriptResultLabel, type ScriptResult, type TableQuery, type TablePage, type TabView, type TableTab, type PendingChanges, type PageStash, type UndoEntry, type WorkspaceDialog } from "./workspace/model";
+import { isSqlTab, kindLabel, largeTableRows, nextSqlTabId, pageSizes, pageStatus, rowEstimateSql, sqlTabId, sqlTabNumber, countValue, clonePending, pendingEmpty, viewKey, viewLabel, primaryKeyList, emptyView, tableTabId, showsRows, objectGroups, schemaMap, describeTabChanges, pendingSummary, pastedRow, isHeaderRow, mergeColumns, structureKey, sameDisplayedRow, fieldsFromValues, fieldsFromDraft, namesFromTables, keepDefinition, withTable, scriptResultLabel, scriptWriteSummary, type ScriptResult, type TableQuery, type TablePage, type TabView, type TableTab, type PendingChanges, type PageStash, type UndoEntry, type WorkspaceDialog } from "./workspace/model";
 import { sessionKey, workspaceTabs, readSession, writeSession, readSchemaView, writeSchemaView, matchTabs, readPaneWidth, readResultsHeight, clampResults, clampPane, paneLimit } from "./workspace/session";
 import { PaneSplitter, TablePager, TreeBranch, ObjectIcon, TableLeaf } from "./workspace/chrome";
 
@@ -893,7 +893,8 @@ export function App() {
 
   const runQuery = useCallback(async (tabId: string, sql?: string | string[], maxRows = editorRowSteps[0], values?: Record<string, SqlValue>) => {
     if (!active || running) return;
-    const requested = Array.isArray(sql) ? sql : [sql ?? editorRefs.current[tabId]?.getActiveSql() ?? ""];
+    // A selection can hold several statements; it runs as a script, like "All".
+    const requested = Array.isArray(sql) ? sql : splitStatements(sql ?? editorRefs.current[tabId]?.getActiveSql() ?? "");
     const statements = requested.map((item) => item.trim()).filter(Boolean);
     // :name parameters are asked for first, then the same run starts again with their values.
     const names = [...new Set(statements.flatMap((statement) => findParams(statement, active.engine)))];
@@ -965,9 +966,10 @@ export function App() {
         setHistory(pushHistory(connectionId, { sql: statement, at: Date.now(), durationMs: result.durationMs, ok: true }));
         if (total > 1) results.push({ sql: statement, columns: result.columns, rows: rows.slice(), rowsAffected: result.rowsAffected, durationMs: result.durationMs });
         affected += result.rowsAffected;
-        if (schemaChange.test(statement)) changedSchema = true;
-        if (/^\s*(begin|start\s+transaction)\b/i.test(statement)) setInTransaction(true);
-        else if (/^\s*(commit|end|abort|rollback)\b(?!\s+to\b)/i.test(statement)) setInTransaction(false);
+        const bare = withoutComments(statement);
+        if (schemaChange.test(bare)) changedSchema = true;
+        if (/^\s*(begin|start\s+transaction)\b/i.test(bare)) setInTransaction(true);
+        else if (/^\s*(commit|end|abort|rollback)\b(?!\s+to\b)/i.test(bare)) setInTransaction(false);
         if (result.cancelled) break;
       }
       if (!result) return;
@@ -977,14 +979,17 @@ export function App() {
         finalResult.truncated ? t("app.status.truncated", { count: formatNumber(maxRows) }) : null,
       ].filter((note) => note !== null);
       const returnsRows = finalResult.columns.length > 0 || finalResult.rowCount > 0;
+      const command = commandTag(statements[0] ?? "");
       const headline = total > 1
-        ? `${plural("app.status.statements", total)} · ${returnsRows ? plural("app.status.rowsInLast", finalResult.rowCount) : plural("app.status.rowsAffected", affected)}`
-        : returnsRows ? plural("common.rows", finalResult.rowCount) : plural("app.status.rowsAffected", finalResult.rowsAffected);
+        ? `${plural("app.status.statements", total)} · ${returnsRows ? plural("app.status.rowsInLast", finalResult.rowCount) : affected > 0 ? plural("app.status.rowsAffected", affected) : t("app.status.completed")}`
+        : returnsRows ? plural("common.rows", finalResult.rowCount)
+          : command && finalResult.rowsAffected === 0 ? t("app.status.commandDone", { command })
+            : plural("app.status.rowsAffected", finalResult.rowsAffected);
       const duration = total > 1 ? Math.round(performance.now() - started) : finalResult.durationMs;
       const status = `${headline} · ${duration} ms${notes.length ? ` · ${notes.join(" · ")}` : ""}`;
       const lastStatement = statements[total - 1] ?? "";
       const nextLimit = editorRowSteps.find((step) => step > maxRows);
-      const more = finalResult.truncated && nextLimit && rerunnable.test(lastStatement) && !modifies.test(lastStatement)
+      const more = finalResult.truncated && nextLimit && rerunnable.test(withoutComments(lastStatement)) && !modifies.test(withoutComments(lastStatement))
         ? { sql: lastStatement, limit: nextLimit }
         : null;
       setViews((current) => ({
@@ -1101,7 +1106,7 @@ export function App() {
   const pickedWrite = (view: TabView) => {
     const picked = view.results?.[view.shown ?? -1];
     if (!picked || picked.error || picked.columns.length > 0) return null;
-    return `${plural("app.status.rowsAffected", picked.rowsAffected)} · ${picked.durationMs} ms`;
+    return `${scriptWriteSummary(picked)} · ${picked.durationMs} ms`;
   };
 
   /** Puts one statement's result of the last script back on screen. */

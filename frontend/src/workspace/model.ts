@@ -6,6 +6,7 @@ import type { PlanNode } from "./plan";
 import { formatNumber, plural, t } from "../lib/i18n";
 import { type TableFilter, type TableSort } from "./filters";
 import { textLiteral } from "./export";
+import { commandTag, withoutComments } from "../editor/activeSql";
 
 export const sqlTabId = "sql";
 
@@ -115,10 +116,16 @@ export type ScriptResult = {
 
 /** Short tab label for a script result: its number, verb, and what it returned. */
 export function scriptResultLabel(result: ScriptResult, index: number): string {
-  const verb = /^\s*(\w+)/.exec(result.sql)?.[1]?.toUpperCase() ?? "SQL";
+  const verb = /^(\w+)/.exec(withoutComments(result.sql))?.[1]?.toUpperCase() ?? "SQL";
   if (result.error) return `${index + 1} · ${verb} · ${t("app.results.failed")}`;
   const returnsRows = result.columns.length > 0;
-  return `${index + 1} · ${verb} · ${returnsRows ? plural("common.rows", result.rows.length) : plural("app.status.rowsAffected", result.rowsAffected)}`;
+  return `${index + 1} · ${verb} · ${returnsRows ? plural("common.rows", result.rows.length) : commandTag(result.sql) && result.rowsAffected === 0 ? t("app.status.completed") : plural("app.status.rowsAffected", result.rowsAffected)}`;
+}
+
+/** What a script's statement without rows did: rows it changed, or the command it completed. */
+export function scriptWriteSummary(result: ScriptResult): string {
+  const command = commandTag(result.sql);
+  return command && result.rowsAffected === 0 ? t("app.status.commandDone", { command }) : plural("app.status.rowsAffected", result.rowsAffected);
 }
 
 export type TableTab = {

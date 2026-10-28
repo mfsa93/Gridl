@@ -49,8 +49,32 @@ export function statementRanges(source: string): StatementRange[] {
   return ranges;
 }
 
+const objects = new Set(["table", "index", "view", "sequence", "schema", "function", "procedure", "trigger", "type", "extension", "database", "role", "user", "policy", "domain", "collation", "aggregate", "rule", "publication", "subscription", "server", "tablespace", "event"]);
+const reportsRows = new Set(["insert", "update", "delete", "merge", "copy", "select", "with", "values", "table", "show", "explain", "call", "exec", "execute", "pragma", "describe", "desc", "replace", "upsert"]);
+
+/** What a statement that changes no rows did, like Postgres' command tag ("CREATE INDEX"); null for statements measured in rows. */
+export function commandTag(statement: string): string | null {
+  const words = withoutComments(statement).toLowerCase().split(/[\s(;]+/).filter(Boolean);
+  const verb = words[0];
+  if (!verb || reportsRows.has(verb)) return null;
+  if (verb === "create" || verb === "alter" || verb === "drop") {
+    const at = words.findIndex((word, index) => index > 0 && (objects.has(word) || word === "materialized"));
+    if (at === -1) return verb.toUpperCase();
+    const object = words[at] === "materialized" ? "materialized view" : words[at];
+    return `${verb} ${object}`.toUpperCase();
+  }
+  if (verb === "refresh" && words[1] === "materialized") return "REFRESH MATERIALIZED VIEW";
+  if (verb === "start" && words[1] === "transaction") return "START TRANSACTION";
+  return verb.toUpperCase();
+}
+
+/** The statement without its comments, so checks on its first word see past a leading note. */
+export function withoutComments(statement: string): string {
+  return statement.replace(/--[^\n]*/g, " ").replace(/\/\*[\s\S]*?\*\//g, " ").trim();
+}
+
 function isOnlyComments(statement: string): boolean {
-  return statement.replace(/--[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "").trim() === "";
+  return withoutComments(statement) === "";
 }
 
 function statementEnds(source: string): number[] {
