@@ -48,6 +48,8 @@ export const es: Record<MessageKey, string> = {
   "app.status.rowsInLast.other": "{count} filas en la última",
   "app.status.rowsAffected.one": "{count} fila afectada",
   "app.status.rowsAffected.other": "{count} filas afectadas",
+  "app.status.commandDone": "{command} completado",
+  "app.status.completed": "completado",
   "app.status.error": "Error",
   "app.status.errorAt": "Error · {time}",
   "app.status.formatFailed": "No se pudo formatear: {error}",
