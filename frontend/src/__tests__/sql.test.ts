@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { activeSql, splitStatements, statementRanges } from "../editor/activeSql";
+import { activeSql, commandTag, splitStatements, statementRanges, withoutComments } from "../editor/activeSql";
+import { t } from "../lib/i18n";
+import { scriptResultLabel, scriptWriteSummary, type ScriptResult } from "../workspace/model";
 import { setDialect, type ColumnDefinition, type TableSchema } from "../lib/api";
 import { createTableSql, deleteSql, insertSql, postgresCast, routineCallSql, updateSql, type NewColumn } from "../workspace/changes";
 import { addForeignKeySql, dropForeignKeySql, foreignKeyClause } from "../workspace/relations";
@@ -15,6 +17,35 @@ beforeEach(() => setDialect("postgres"));
 describe("statement splitting", () => {
   it("ignores semicolons inside quotes, comments and dollar quotes", () => {
     expect(splitStatements("select 1; select 'a;b'; -- c;\n/* x; */ select $$;$$;")).toEqual(["select 1", "select 'a;b'", "-- c;\n/* x; */ select $$;$$"]);
+  });
+  it("splits a selected migration into its statements", () => {
+    const doc = "-- Card attributes; idempotent.\n\nBEGIN;\n\nALTER TABLE cards ALTER COLUMN seq DROP NOT NULL;\n\nALTER TABLE cards ADD COLUMN IF NOT EXISTS caps varchar(20)[] NULL;\n\nCOMMIT;\n";
+    expect(splitStatements(activeSql(doc, 0, doc.length))).toEqual([
+      "-- Card attributes; idempotent.\n\nBEGIN",
+      "ALTER TABLE cards ALTER COLUMN seq DROP NOT NULL",
+      "ALTER TABLE cards ADD COLUMN IF NOT EXISTS caps varchar(20)[] NULL",
+      "COMMIT",
+    ]);
+  });
+  it("names what a statement without rows did", () => {
+    expect(commandTag("CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx ON s.cards USING btree (h)")).toBe("CREATE INDEX");
+    expect(commandTag("-- note\nalter table cards add column x int")).toBe("ALTER TABLE");
+    expect(commandTag("create or replace view v as select 1")).toBe("CREATE VIEW");
+    expect(commandTag("drop materialized view if exists m")).toBe("DROP MATERIALIZED VIEW");
+    expect(commandTag("refresh materialized view m")).toBe("REFRESH MATERIALIZED VIEW");
+    expect(commandTag("begin")).toBe("BEGIN");
+    expect(commandTag("grant select on cards to app")).toBe("GRANT");
+    expect(commandTag("update cards set x = 1")).toBeNull();
+    expect(commandTag("insert into cards values (1)")).toBeNull();
+  });
+  it("reads a statement's first word past its comments", () => {
+    expect(withoutComments("-- Card attributes; idempotent.\n\n/* v2 */ BEGIN")).toBe("BEGIN");
+  });
+  it("labels a script's statements by what they did", () => {
+    const ran = (sql: string, rowsAffected: number): ScriptResult => ({ sql, columns: [], rows: [], rowsAffected, durationMs: 1 });
+    expect(scriptResultLabel(ran("-- note\nALTER TABLE cards ADD COLUMN x int", 0), 1)).toBe(`2 · ALTER · ${t("app.status.completed")}`);
+    expect(scriptWriteSummary(ran("CREATE INDEX i ON cards (x)", 0))).toBe(t("app.status.commandDone", { command: "CREATE INDEX" }));
+    expect(scriptWriteSummary(ran("update cards set x = 1", 0))).toBe(t("app.status.rowsAffected.other", { count: 0 }));
   });
   it("drops statements made only of comments", () => {
     expect(splitStatements("-- nada\n;")).toEqual([]);

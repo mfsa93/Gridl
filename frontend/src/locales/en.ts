@@ -50,6 +50,8 @@ export const en = {
   "app.status.rowsInLast.other": "{count} rows in the last one",
   "app.status.rowsAffected.one": "{count} row affected",
   "app.status.rowsAffected.other": "{count} rows affected",
+  "app.status.commandDone": "{command} completed",
+  "app.status.completed": "completed",
   "app.status.error": "Error",
   "app.status.errorAt": "Error · {time}",
   "app.status.formatFailed": "Couldn't format: {error}",

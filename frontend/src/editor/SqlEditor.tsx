@@ -1,7 +1,5 @@
-import { engineSpec } from "../engines";
 import { autocompletion, completionKeymap } from "@codemirror/autocomplete";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
-import { MSSQL, MySQL, PostgreSQL, sql, SQLite } from "@codemirror/lang-sql";
 import { forceLinting, lintGutter } from "@codemirror/lint";
 import { bracketMatching, HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
@@ -13,6 +11,7 @@ import type { DatabaseEngine } from "../lib/api";
 import { useColorScheme, type ColorScheme } from "../lib/appearance";
 import { activeSql } from "./activeSql";
 import { formatSql } from "./formatSql";
+import { sqlExtension } from "./sqlLanguage";
 import { forgetChecks, sqlDiagnostics, type SqlChecker } from "./diagnostics";
 
 export type SqlEditorHandle = {
@@ -67,14 +66,6 @@ const lightTheme = EditorView.theme({
 
 function appearanceExtension(scheme: ColorScheme) {
   return scheme === "dark" ? oneDark : [lightTheme, syntaxHighlighting(xcodeLight)];
-}
-
-function sqlExtension(engine: DatabaseEngine, schema: Record<string, string[]>) {
-  return sql({
-    dialect: { postgresql: PostgreSQL, mysql: MySQL, sqlite: SQLite, transactsql: MSSQL }[engineSpec(engine).sql.dialect],
-    schema,
-    upperCaseKeywords: true,
-  });
 }
 
 export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(function SqlEditor(
