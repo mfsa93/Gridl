@@ -21,7 +21,7 @@ tauri-build = { version = "2.6", features = [] }
 [dependencies]
 async-trait.workspace = true
 gridl-core = { path = "../gridl-core" }
-russh = "=0.63.1"
+russh = "=0.65.0"
 serde.workspace = true
 serde_json.workspace = true
 tauri = { version = "2.11", features = ["macos-private-api"] }
